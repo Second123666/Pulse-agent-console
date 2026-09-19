@@ -19,6 +19,7 @@
     "prod": "node ./build/index.mjs",
     "build": "pnpm clean && tsup",
     "clean": "rimraf build",
+    "type-check": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "common:cleanup": "rimraf node_modules && rimraf pnpm-lock.yaml"
