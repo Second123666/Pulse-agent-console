@@ -70,6 +70,12 @@ export async function search(queryEmbedding: number[], k = 3): Promise<VectorRec
     .map(x => x.record)
 }
 
+/** 返回全部记录（关键词降级检索用） */
+export async function all(): Promise<VectorRecord[]> {
+  await ensureLoaded()
+  return records
+}
+
 /** 清空向量库（测试用） */
 export async function clear(): Promise<void> {
   records = []

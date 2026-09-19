@@ -1,6 +1,7 @@
 import { register } from '../agent/registry'
 import { calculator } from './calculator'
 import { getTime } from './getTime'
+import { ragSearch } from './ragSearch'
 import { readFileTool } from './readFile'
 import { webSearch } from './webSearch'
 
@@ -9,3 +10,4 @@ register(calculator)
 register(getTime)
 register(webSearch)
 register(readFileTool)
+register(ragSearch)
