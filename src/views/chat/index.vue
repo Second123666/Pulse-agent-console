@@ -13,8 +13,8 @@ import { useUsingContext } from './hooks/useUsingContext'
 import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { useChatStore, usePromptStore } from '@/store'
-import { fetchChatAPIProcess } from '@/api'
+import { useChatStore, usePromptStore, useSettingStore } from '@/store'
+import { fetchAgentProcess, fetchChatAPIProcess } from '@/api'
 import { t } from '@/locales'
 
 let controller = new AbortController()
@@ -26,6 +26,7 @@ const dialog = useDialog()
 const ms = useMessage()
 
 const chatStore = useChatStore()
+const settingStore = useSettingStore()
 
 const { isMobile } = useBasicLayout()
 const { addChat, updateChat, updateChatSome, getChatByUuidAndIndex } = useChat()
@@ -119,9 +120,48 @@ async function onConversation() {
   )
   scrollToBottom()
 
+  // Agent 模式：走 /agent-process，SSE 逐事件渲染（4.3 将用 ToolCallCard 展示工具步骤）
+  const onAgentConversation = async () => {
+    await fetchAgentProcess({
+      prompt: message,
+      systemMessage: settingStore.systemMessage,
+      signal: controller.signal,
+      onEvent: (event) => {
+        if (event.type === 'answer') {
+          updateChat(
+            +uuid,
+            dataSources.value.length - 1,
+            {
+              dateTime: new Date().toLocaleString(),
+              text: event.content ?? '',
+              inversion: false,
+              error: false,
+              loading: true,
+              conversationOptions: null,
+              requestOptions: { prompt: message, options: { ...options } },
+            },
+          )
+          scrollToBottomIfAtBottom()
+        }
+        else if (event.type === 'error') {
+          updateChatSome(
+            +uuid,
+            dataSources.value.length - 1,
+            { text: `[Agent 错误] ${event.message ?? ''}`, error: true, loading: false },
+          )
+        }
+      },
+    })
+    updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
+  }
+
   try {
-    let lastText = ''
-    const fetchChatAPIOnce = async () => {
+    if (settingStore.agentMode) {
+      await onAgentConversation()
+    }
+    else {
+      let lastText = ''
+      const fetchChatAPIOnce = async () => {
       await fetchChatAPIProcess<Chat.ConversationResponse>({
         prompt: message,
         options,
@@ -167,12 +207,13 @@ async function onConversation() {
       updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
     }
 
-    await fetchChatAPIOnce()
+      await fetchChatAPIOnce()
+    }
   }
   catch (error: any) {
     const errorMessage = error?.message ?? t('common.wrong')
 
-    if (error.message === 'canceled') {
+    if (error.message === 'canceled' || error?.name === 'AbortError') {
       updateChatSome(
         +uuid,
         dataSources.value.length - 1,

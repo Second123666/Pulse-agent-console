@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { computed, nextTick } from 'vue'
+import { NSwitch } from 'naive-ui'
 import { HoverButton, SvgIcon } from '@/components/common'
-import { useAppStore, useChatStore } from '@/store'
+import { useAppStore, useChatStore, useSettingStore } from '@/store'
 
 interface Props {
   usingContext: boolean
@@ -18,6 +19,7 @@ const emit = defineEmits<Emit>()
 
 const appStore = useAppStore()
 const chatStore = useChatStore()
+const settingStore = useSettingStore()
 
 const collapsed = computed(() => appStore.siderCollapsed)
 const currentChatHistory = computed(() => chatStore.getChatHistoryByCurrentActive)
@@ -38,6 +40,10 @@ function handleExport() {
 
 function handleClear() {
   emit('handleClear')
+}
+
+function handleAgentModeChange(value: boolean) {
+  settingStore.updateSetting({ agentMode: value })
 }
 </script>
 
@@ -62,6 +68,10 @@ function handleClear() {
         {{ currentChatHistory?.title ?? '' }}
       </h1>
       <div class="flex items-center space-x-2">
+        <div class="flex items-center gap-1.5 select-none" title="Agent 模式：开启后由 Agent 循环处理（支持工具调用）">
+          <span class="text-xs text-[#4f555e] dark:text-neutral-400">Agent</span>
+          <NSwitch size="small" :value="settingStore.agentMode" @update:value="handleAgentModeChange" />
+        </div>
         <HoverButton @click="handleExport">
           <span class="text-xl text-[#4f555e] dark:text-white">
             <SvgIcon icon="ri:download-2-line" />

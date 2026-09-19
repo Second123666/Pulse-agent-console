@@ -6,6 +6,8 @@ export interface SettingsState {
   systemMessage: string
   temperature: number
   top_p: number
+  /** Agent 模式开关（持久化），开启后聊天走 /agent-process */
+  agentMode: boolean
 }
 
 export function defaultSetting(): SettingsState {
@@ -13,6 +15,7 @@ export function defaultSetting(): SettingsState {
     systemMessage: '你是一个乐于助人的智能助手，请仔细遵循用户的指令，并使用 markdown 格式回复。',
     temperature: 0.8,
     top_p: 1,
+    agentMode: false,
   }
 }
 
