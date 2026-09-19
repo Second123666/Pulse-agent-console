@@ -120,14 +120,27 @@ async function onConversation() {
   )
   scrollToBottom()
 
-  // Agent 模式：走 /agent-process，SSE 逐事件渲染（4.3 将用 ToolCallCard 展示工具步骤）
+  // Agent 模式：走 /agent-process，SSE 逐事件渲染；thought/tool_call/tool_result 汇入 agentSteps 由 ToolCallCard 展示
   const onAgentConversation = async () => {
+    const agentSteps: Chat.AgentStep[] = []
     await fetchAgentProcess({
       prompt: message,
       systemMessage: settingStore.systemMessage,
       signal: controller.signal,
       onEvent: (event) => {
-        if (event.type === 'answer') {
+        if (event.type === 'thought') {
+          agentSteps.push({ type: 'thought', content: event.content })
+          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
+        }
+        else if (event.type === 'tool_call') {
+          agentSteps.push({ type: 'tool_call', id: event.id, name: event.name, arguments: event.arguments })
+          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
+        }
+        else if (event.type === 'tool_result') {
+          agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content: event.content })
+          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
+        }
+        else if (event.type === 'answer') {
           updateChat(
             +uuid,
             dataSources.value.length - 1,
@@ -137,6 +150,7 @@ async function onConversation() {
               inversion: false,
               error: false,
               loading: true,
+              agentSteps: [...agentSteps],
               conversationOptions: null,
               requestOptions: { prompt: message, options: { ...options } },
             },
@@ -162,50 +176,50 @@ async function onConversation() {
     else {
       let lastText = ''
       const fetchChatAPIOnce = async () => {
-      await fetchChatAPIProcess<Chat.ConversationResponse>({
-        prompt: message,
-        options,
-        signal: controller.signal,
-        onDownloadProgress: ({ event }) => {
-          const xhr = event.target
-          const { responseText } = xhr
-          // Always process the final line
-          const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
-          let chunk = responseText
-          if (lastIndex !== -1)
-            chunk = responseText.substring(lastIndex)
-          try {
-            const data = JSON.parse(chunk)
-            updateChat(
-              +uuid,
-              dataSources.value.length - 1,
-              {
-                dateTime: new Date().toLocaleString(),
-                text: lastText + (data.text ?? ''),
-                inversion: false,
-                error: false,
-                loading: true,
-                conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
-                requestOptions: { prompt: message, options: { ...options } },
-              },
-            )
+        await fetchChatAPIProcess<Chat.ConversationResponse>({
+          prompt: message,
+          options,
+          signal: controller.signal,
+          onDownloadProgress: ({ event }) => {
+            const xhr = event.target
+            const { responseText } = xhr
+            // Always process the final line
+            const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
+            let chunk = responseText
+            if (lastIndex !== -1)
+              chunk = responseText.substring(lastIndex)
+            try {
+              const data = JSON.parse(chunk)
+              updateChat(
+                +uuid,
+                dataSources.value.length - 1,
+                {
+                  dateTime: new Date().toLocaleString(),
+                  text: lastText + (data.text ?? ''),
+                  inversion: false,
+                  error: false,
+                  loading: true,
+                  conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+                  requestOptions: { prompt: message, options: { ...options } },
+                },
+              )
 
-            if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
-              options.parentMessageId = data.id
-              lastText = data.text
-              message = ''
-              return fetchChatAPIOnce()
+              if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
+                options.parentMessageId = data.id
+                lastText = data.text
+                message = ''
+                return fetchChatAPIOnce()
+              }
+
+              scrollToBottomIfAtBottom()
             }
-
-            scrollToBottomIfAtBottom()
-          }
-          catch (error) {
+            catch (error) {
             //
-          }
-        },
-      })
-      updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
-    }
+            }
+          },
+        })
+        updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
+      }
 
       await fetchChatAPIOnce()
     }
@@ -522,34 +536,31 @@ function startRecording() {
 
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const transcript = event.results[i][0].transcript
-      if (event.results[i].isFinal) {
+      if (event.results[i].isFinal)
         finalTranscript += transcript
-      }
-      else {
+
+      else
         interimTranscript += transcript
-      }
     }
 
-    if (finalTranscript) {
+    if (finalTranscript)
       prompt.value = finalTranscript
-    }
-    else if (interimTranscript) {
+
+    else if (interimTranscript)
       prompt.value = interimTranscript
-    }
   }
 
   recognition.value.onerror = (event: any) => {
     console.error('Speech recognition error:', event.error)
     isRecording.value = false
-    if (event.error === 'not-allowed') {
+    if (event.error === 'not-allowed')
       ms.error('请允许麦克风权限')
-    }
-    else if (event.error === 'no-speech') {
+
+    else if (event.error === 'no-speech')
       ms.error('未检测到语音')
-    }
-    else {
+
+    else
       ms.error('语音识别失败')
-    }
   }
 
   recognition.value.onend = () => {
@@ -568,12 +579,11 @@ function stopRecording() {
 }
 
 function toggleRecording() {
-  if (isRecording.value) {
+  if (isRecording.value)
     stopRecording()
-  }
-  else {
+
+  else
     startRecording()
-  }
 }
 
 function loadVoices() {
@@ -581,7 +591,8 @@ function loadVoices() {
 }
 
 function speakText(text: string) {
-  if (!text) return
+  if (!text)
+    return
 
   const synth = window.speechSynthesis
   synth.cancel()
@@ -593,9 +604,8 @@ function speakText(text: string) {
   utterance.volume = 1
 
   const chineseVoices = voices.value.filter(voice => voice.lang.includes('zh'))
-  if (chineseVoices.length > 0) {
+  if (chineseVoices.length > 0)
     utterance.voice = chineseVoices[0]
-  }
 
   utterance.onend = () => {
     synth.cancel()
@@ -637,10 +647,13 @@ onUnmounted(() => {
             </template>
             <template v-else>
               <div>
-                <Message v-for="(item, index) of dataSources" :key="index" :date-time="item.dateTime" :text="item.text"
+                <Message
+                  v-for="(item, index) of dataSources" :key="index" :date-time="item.dateTime" :text="item.text"
                   :inversion="item.inversion" :error="item.error" :loading="item.loading" :quote="item.quote"
+                  :agent-steps="item.agentSteps"
                   @regenerate="onRegenerate(index)" @delete="handleDelete(index)" @reply="handleReply"
-                  @speak="speakText" />
+                  @speak="speakText"
+                />
                 <div class="sticky bottom-0 left-0 flex justify-center">
                   <NButton v-if="loading" type="warning" @click="handleStop">
                     <template #icon>
@@ -674,16 +687,20 @@ onUnmounted(() => {
             </span>
           </HoverButton>
           <HoverButton @click="toggleRecording">
-            <span class="text-xl"
-              :class="{ 'text-[#ef4444]': isRecording, 'text-[#4f555e] dark:text-white': !isRecording }">
+            <span
+              class="text-xl"
+              :class="{ 'text-[#ef4444]': isRecording, 'text-[#4f555e] dark:text-white': !isRecording }"
+            >
               <SvgIcon :icon="isRecording ? 'ri:mic-off-line' : 'ri:mic-line'" />
             </span>
           </HoverButton>
           <NAutoComplete v-model:value="prompt" :options="searchOptions" :render-label="renderOption">
             <template #default="{ handleInput, handleBlur, handleFocus }">
-              <NInput ref="inputRef" v-model:value="prompt" type="textarea" :placeholder="placeholder"
+              <NInput
+                ref="inputRef" v-model:value="prompt" type="textarea" :placeholder="placeholder"
                 :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 8 }" @input="handleInput" @focus="handleFocus"
-                @blur="handleBlur" @keypress="handleEnter" />
+                @blur="handleBlur" @keypress="handleEnter"
+              />
             </template>
           </NAutoComplete>
           <NButton type="primary" :disabled="buttonDisabled" @click="handleSubmit">

@@ -1,3 +1,5 @@
+// 递归下降解析器存在合法的前向引用（互递归），关闭该规则
+/* eslint-disable @typescript-eslint/no-use-before-define */
 import type { Tool } from '../agent/types'
 
 // 安全的表达式求值：自写递归下降解析，仅支持 + - * / % 括号与小数，禁止 eval

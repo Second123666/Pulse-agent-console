@@ -1,5 +1,13 @@
 declare namespace Chat {
 
+	interface AgentStep {
+		type: 'thought' | 'tool_call' | 'tool_result'
+		content?: string
+		id?: string
+		name?: string
+		arguments?: string
+	}
+
 	interface Chat {
 		dateTime: string
 		text: string
@@ -7,6 +15,8 @@ declare namespace Chat {
 		error?: boolean
 		loading?: boolean
 		quote?: string
+		/** Agent 模式的思考与工具调用步骤流 */
+		agentSteps?: AgentStep[]
 		conversationOptions?: ConversationRequest | null
 		requestOptions: { prompt: string; options?: ConversationRequest | null }
 	}

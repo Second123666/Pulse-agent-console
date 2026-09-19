@@ -89,7 +89,7 @@ router.post('/config', async (req, res) => {
 router.post('/session', async (req, res) => {
   try {
     const AUTH_SECRET_KEY = process.env.AUTH_SECRET_KEY
-    const auth = !!AUTH_SECRET_KEY  // 如果配置了密钥，auth = true
+    const auth = !!AUTH_SECRET_KEY // 如果配置了密钥，auth = true
     res.send({ status: 'Success', message: '', data: { auth, model: currentModel() } })
   }
   catch (error) {
@@ -107,12 +107,11 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    if (token === AUTH_SECRET_KEY) {
+    if (token === AUTH_SECRET_KEY)
       res.send({ status: 'Success', message: '', data: null })
-    }
-    else {
+
+    else
       res.send({ status: 'Fail', message: 'Invalid secret key', data: null })
-    }
   }
   catch (error) {
     res.send({ status: 'Fail', message: error.message, data: null })

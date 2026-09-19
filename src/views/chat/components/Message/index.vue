@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { NDropdown, useMessage } from 'naive-ui'
 import AvatarComponent from './Avatar.vue'
 import TextComponent from './Text.vue'
+import ToolCallCard from './ToolCallCard.vue'
 import { SvgIcon } from '@/components/common'
 import { useIconRender } from '@/hooks/useIconRender'
 import { t } from '@/locales'
@@ -15,6 +16,7 @@ interface Props {
   inversion?: boolean
   error?: boolean
   loading?: boolean
+  agentSteps?: Chat.AgentStep[]
 }
 
 interface Emit {
@@ -112,8 +114,10 @@ async function handleCopy() {
 
 <template>
   <div ref="messageRef" class="flex w-full mb-6 overflow-hidden" :class="[{ 'flex-row-reverse': inversion }]">
-    <div class="flex items-center justify-center flex-shrink-0 h-8 overflow-hidden rounded-full basis-8"
-      :class="[inversion ? 'ml-2' : 'mr-2']">
+    <div
+      class="flex items-center justify-center flex-shrink-0 h-8 overflow-hidden rounded-full basis-8"
+      :class="[inversion ? 'ml-2' : 'mr-2']"
+    >
       <AvatarComponent :image="inversion" />
     </div>
     <div class="overflow-hidden text-sm " :class="[inversion ? 'items-end' : 'items-start']">
@@ -121,16 +125,25 @@ async function handleCopy() {
         {{ dateTime }}
       </p>
       <div class="flex items-end gap-1 mt-2" :class="[inversion ? 'flex-row-reverse' : 'flex-row']">
-        <TextComponent ref="textRef" :inversion="inversion" :error="error" :text="text" :loading="loading"
-          :as-raw-text="asRawText" />
         <div class="flex flex-col">
-          <button v-if="!inversion"
+          <TextComponent
+            ref="textRef" :inversion="inversion" :error="error" :text="text" :loading="loading"
+            :as-raw-text="asRawText"
+          />
+          <ToolCallCard v-if="agentSteps?.length && !inversion" :steps="agentSteps" />
+        </div>
+        <div class="flex flex-col">
+          <button
+            v-if="!inversion"
             class="mb-2 transition text-neutral-300 hover:text-neutral-800 dark:hover:text-neutral-300"
-            @click="handleRegenerate">
+            @click="handleRegenerate"
+          >
             <SvgIcon icon="ri:restart-line" />
           </button>
-          <NDropdown :trigger="isMobile ? 'click' : 'hover'" :placement="!inversion ? 'right' : 'left'"
-            :options="options" @select="handleSelect">
+          <NDropdown
+            :trigger="isMobile ? 'click' : 'hover'" :placement="!inversion ? 'right' : 'left'"
+            :options="options" @select="handleSelect"
+          >
             <button class="transition text-neutral-300 hover:text-neutral-800 dark:hover:text-neutral-200">
               <SvgIcon icon="ri:more-2-fill" />
             </button>

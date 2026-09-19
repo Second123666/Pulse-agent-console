@@ -57,7 +57,7 @@ Express 后端 (service/)
 interface Tool {
   name: string
   description: string
-  parameters: JSONSchema7   // 直接传给 OpenAI tools 参数
+  parameters: JSONSchema7 // 直接传给 OpenAI tools 参数
   handler: (args: any) => Promise<string>
 }
 ```

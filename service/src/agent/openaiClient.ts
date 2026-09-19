@@ -60,7 +60,7 @@ export class OpenAIError extends Error {
 
 function timeoutMs(): number {
   const raw = Number(process.env.TIMEOUT_MS)
-  return Number.isFinite(raw) && raw > 0 ? raw : 100 * 1000
+  return (Number.isFinite(raw) && raw > 0) ? raw : 100 * 1000
 }
 
 function summarizeBody(body: string): string {
@@ -96,7 +96,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
     const response = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),

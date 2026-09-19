@@ -1,6 +1,7 @@
+/* eslint-disable no-console */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { chunkText, type TextChunk } from './chunk'
+import { type TextChunk, chunkText } from './chunk'
 import { embedTexts } from './embed'
 import { upsert } from './store'
 

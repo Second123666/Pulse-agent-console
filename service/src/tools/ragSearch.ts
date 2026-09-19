@@ -1,6 +1,6 @@
 import type { Tool } from '../agent/types'
 import { embedTexts } from '../rag/embed'
-import { all, search, type VectorRecord } from '../rag/store'
+import { type VectorRecord, all, search } from '../rag/store'
 
 /** 来源 = 块 id 的文件名部分（ingest 生成的 id 形如 <文件名>:<序号>） */
 function sourceOf(record: VectorRecord): string {

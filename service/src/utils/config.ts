@@ -13,7 +13,7 @@ export interface AgentConfig {
 
 function envNumber(name: string, fallback: number): number {
   const raw = Number(process.env[name])
-  return Number.isFinite(raw) && raw > 0 ? raw : fallback
+  return (Number.isFinite(raw) && raw > 0) ? raw : fallback
 }
 
 function envString(name: string, fallback = ''): string {

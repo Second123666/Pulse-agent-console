@@ -1,5 +1,5 @@
 import { agentConfig } from '../utils/config'
-import { chatCompletion, type OpenAIMessage, type OpenAITool } from './openaiClient'
+import { type OpenAIMessage, type OpenAITool, chatCompletion } from './openaiClient'
 import type { AgentRunOptions } from './types'
 
 /** 熔断提示词：要求模型立刻总结收尾（仅注入一次） */

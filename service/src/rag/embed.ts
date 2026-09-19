@@ -22,7 +22,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   const response = await fetch(`${baseURL}/embeddings`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ model, input: texts }),
