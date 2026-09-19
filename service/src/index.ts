@@ -7,6 +7,7 @@ import { limiter } from './middleware/limiter'
 import { runAgent } from './agent/loop'
 import { list } from './agent/registry'
 import type { AgentEvent } from './agent/types'
+import './tools'
 
 const app = express()
 const router = express.Router()
