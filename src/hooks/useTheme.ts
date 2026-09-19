@@ -22,9 +22,19 @@ export function useTheme() {
   const themeOverrides = computed<GlobalThemeOverrides>(() => {
     return {
       common: {
-        primaryColor: '#3B82F6',      // 蓝色
-        primaryColorHover: '#2563EB',  // 蓝色 hover
-        primaryColorPressed: '#1D4ED8', // 蓝色 pressed
+        primaryColor: '#0D9488', // 信号青 teal-600
+        primaryColorHover: '#14B8A6', // teal-500
+        primaryColorPressed: '#0F766E', // teal-700
+        primaryColorSuppl: '#14B8A6',
+        borderRadius: '8px',
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
+        fontFamilyMono: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      },
+      Input: {
+        borderRadius: '8px',
+      },
+      Button: {
+        borderRadiusMedium: '8px',
       },
     }
   })

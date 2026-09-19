@@ -21,7 +21,14 @@
 
 	.highlight pre,
 	pre {
-		background-color: #fff;
+		background-color: #f6f8fa;
+		border: 1px solid var(--agent-hairline, #e4e4de);
+		border-radius: 8px;
+	}
+
+	code {
+		font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 0.86em;
 	}
 
 	code.hljs {
@@ -31,27 +38,36 @@
 	.code-block {
 		&-wrapper {
 			position: relative;
-			padding-top: 24px;
+			padding-top: 28px;
 		}
 
 		&-header {
 			position: absolute;
-			top: 5px;
+			top: 0;
 			right: 0;
 			width: 100%;
-			padding: 0 1rem;
+			height: 28px;
+			padding: 0 0.75rem;
 			display: flex;
-			justify-content: flex-end;
+			justify-content: space-between;
 			align-items: center;
-			color: #b3b3b3;
+			flex-direction: row-reverse;
+			border-bottom: 1px solid var(--agent-hairline, #e4e4de);
+			color: var(--agent-text-dim, #8a8f98);
+			font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			font-size: 11px;
+
+			&__lang {
+				letter-spacing: 0.04em;
+			}
 
 			&__copy {
 				cursor: pointer;
-				margin-left: 0.5rem;
 				user-select: none;
+				transition: color 120ms ease;
 
 				&:hover {
-					color: #65a665;
+					color: var(--agent-accent, #0d9488);
 				}
 			}
 		}
@@ -59,11 +75,11 @@
 
 	// Mermaid
 	div[id^='mermaid-container'] {
-		padding: 4px;
-		border-radius: 4px;
+		padding: 8px;
+		border-radius: 8px;
 		overflow-x: auto !important;
 		background-color: #fff;
-		border: 1px solid #e5e5e5;
+		border: 1px solid var(--agent-hairline, #e5e5e5);
 	}
 
 	&.markdown-body-generate>dd:last-child:after,
@@ -82,7 +98,7 @@
 	&.markdown-body-generate>td:last-child:after,
 	&.markdown-body-generate>ul:last-child li:last-child:after {
 		animation: blink 1s steps(5, start) infinite;
-		color: #000;
+		color: var(--agent-accent, #0d9488);
 		content: '_';
 		font-weight: 700;
 		margin-left: 3px;
@@ -115,7 +131,7 @@ html.dark {
 		&.markdown-body-generate>pre:last-child code:after,
 		&.markdown-body-generate>td:last-child:after,
 		&.markdown-body-generate>ul:last-child li:last-child:after {
-			color: #65a665;
+			color: var(--agent-accent, #2dd4bf);
 		}
 	}
 
@@ -129,6 +145,7 @@ html.dark {
 	.highlight pre,
 	pre {
 		background-color: #282c34;
+		border-color: #26292f;
 	}
 }
 
