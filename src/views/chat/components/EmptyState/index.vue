@@ -33,8 +33,8 @@ const examples = [
   <div class="flex flex-col items-center px-6 pt-10 pb-6 select-none empty-state">
     <div class="empty-state-hero flex flex-col items-center">
       <BrandLogo :size="56" />
-      <h1 class="mt-4 text-2xl font-semibold tracking-wide pulse-brand">
-        PULSE
+      <h1 class="mt-4 text-2xl font-semibold tracking-wider pulse-brand">
+        思脉AI工作台
       </h1>
       <p class="mt-1.5 text-[13px] font-mono text-[var(--agent-text-dim)]">
         an agent that thinks, calls tools &amp; answers

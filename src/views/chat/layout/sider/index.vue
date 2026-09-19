@@ -90,11 +90,11 @@ watch(
       <header class="flex items-center gap-2.5 px-4 pt-4 pb-1 select-none">
         <BrandLogo :size="28" />
         <div class="leading-tight">
-          <div class="text-[15px] font-semibold tracking-wide pulse-brand">
-            PULSE
+          <div class="text-[15px] font-semibold tracking-wider pulse-brand">
+            思脉AI工作台
           </div>
           <div class="text-[11px] text-[var(--agent-text-dim)] font-mono">
-            agent console
+            pulse · agent console
           </div>
         </div>
       </header>
