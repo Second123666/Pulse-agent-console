@@ -1,2 +1,188 @@
-# AI-chat
-It's a project that make a chat robot
+# 思脉AI工作台 · pulse · agent console
+
+> 一个可调用工具的 Agent 化 AI 对话工作台 —— 基于 ChatGPT-Web 二次开发，为原版对话系统注入了 **ReAct 工具调用循环、RAG 知识库与 SSE 流式 Agent 交互**。
+
+[![Node](https://img.shields.io/badge/node-%3E%3D18-blue)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9-blue)](https://www.typescriptlang.org)
+[![Vue 3](https://img.shields.io/badge/Vue-3.2-42b883)](https://vuejs.org)
+[![Express](https://img.shields.io/badge/Express-4.18-green)](https://expressjs.com)
+
+---
+
+## 目录
+
+- [项目简介](#项目简介)
+- [Agent 架构](#agent-架构)
+- [ReAct 循环说明](#react-循环说明)
+- [工具系统](#工具系统)
+- [RAG 知识库](#rag-知识库)
+- [技术亮点](#技术亮点)
+- [快速开始](#快速开始)
+- [配置说明](#配置说明)
+
+## 项目简介
+
+「思脉AI工作台」是一个 **Agent 化**的 AI 对话应用：在普通聊天的基础上，模型可以按需调用工具（计算器、时间、联网搜索、文件读取、知识库检索），像"思考 → 行动 → 观察 → 总结"的人类工作流一样拆解并完成任务。
+
+- **前端**：Vue 3 + Naive UI + Tailwind，支持多语言、暗色模式、PWA、命令面板（⌘K）
+- **后端**：Express + TypeScript，OpenAI 兼容协议，零外部服务依赖即可跑通全流程
+- **Agent 内核**：自研 ReAct 循环 + 工具注册表 + 熔断/预算兜底，约 400 行核心代码
+
+## Agent 架构
+
+```mermaid
+flowchart LR
+    U[用户提问] --> FE[前端聊天页]
+    FE -->|POST /agent-process / SSE| EP[Express 端点]
+    EP --> LOOP[ReAct 循环 loop.ts]
+    LOOP -->|chat/completions| LLM[LLM 模型]
+    LOOP -->|tool_calls| REG[工具注册表 registry.ts]
+    REG --> CAL[calculator]
+    REG --> TIME[get_time]
+    REG --> WEB[web_search]
+    REG --> FILE[read_file]
+    REG --> RAG[rag_search]
+    RAG --> VEC[(向量库 vectors.json)]
+    RAG -.embedding 不可用.-> KW[关键词降级]
+    LOOP -->|AgentEvent 流| SSE2[SSE 事件流]
+    SSE2 --> CARD[ToolCallCard 步骤卡片]
+    CARD --> U
+```
+
+**数据流**：前端开启 Agent 模式 → `/agent-process` 建立 SSE 长连接 → 后端运行 ReAct 循环 → 每产生一个事件（思考/工具调用/工具结果/回答）立即推给前端 → 前端以控制台步骤流卡片实时渲染。
+
+## ReAct 循环说明
+
+ReAct（Reasoning + Acting）让模型交替进行「推理」与「工具调用」，直到得出最终答案：
+
+```
+┌─────────────────────────────────────────────┐
+│ while (未达到步数/预算上限) {                 │
+│   1. 调用模型（携带对话历史 + 工具列表）       │
+│   2. 模型返回：有 tool_calls 还是直接回答？    │
+│      ├─ 直接回答 → 推送 answer 事件，结束     │
+│      └─ 有 tool_calls →                       │
+│          a. 推送 thought 事件（模型思考）      │
+│          b. 逐个执行工具，推送 tool_call/      │
+│             tool_result 事件                  │
+│          c. 把工具结果回填为 role:'tool' 消息   │
+│          d. 继续下一轮（模型可基于结果自愈）    │
+│   3. 熔断检查：步数或 token 预算超限时注入     │
+│      系统消息要求模型立即总结收尾（仅一次）     │
+│ }                                            │
+└─────────────────────────────────────────────┘
+```
+
+关键设计：
+
+- **自愈**：工具抛错不会中断循环，错误文本以 `[tool error]` 回填，模型可据此纠正参数重试
+- **熔断**：达到 `AGENT_MAX_STEPS` 或 token 预算时注入收尾指令，模型仍不停止则强制截断，防止死循环
+- **兜底说明**：熔断后回答自动附带「（因预算/步数限制提前截断）」标注
+
+## 工具系统
+
+每个工具是一个独立文件，实现统一的 `Tool` 接口后注册即可：
+
+| 工具 | 文件 | 能力 |
+|------|------|------|
+| calculator | `service/src/tools/calculator.ts` | 安全四则运算（自研递归下降解析，**禁 eval**） |
+| get_time | `service/src/tools/getTime.ts` | 当前时间 / IANA 时区换算（零依赖） |
+| web_search | `service/src/tools/webSearch.ts` | 联网搜索（Tavily，无 key 时降级提示） |
+| read_file | `service/src/tools/readFile.ts` | 只读仓库内文件（白名单 + 100KB 上限） |
+| rag_search | `service/src/tools/ragSearch.ts` | 知识库语义检索（embedding 不可用时关键词降级） |
+
+### 如何扩展一个新工具
+
+1. 在 `service/src/tools/` 新建 `myTool.ts`：
+
+```ts
+import type { Tool } from '../agent/types'
+
+export const myTool: Tool = {
+  name: 'my_tool',
+  description: '描述这个工具的用途（会被模型看到，务必写清楚参数含义）',
+  parameters: {
+    type: 'object',
+    properties: {
+      keyword: { type: 'string', description: '参数说明' },
+    },
+    required: ['keyword'],
+  },
+  // 参数是 Record<string, unknown>，返回 string（或 Promise<string>）
+  handler: async (args) => {
+    return `处理结果：${String(args.keyword)}`
+  },
+}
+```
+
+2. 在 `service/src/tools/index.ts` 注册：
+
+```ts
+import { myTool } from './myTool'
+register(myTool)
+```
+
+3. 跑单测（建议为每个工具写 vitest 用例）：`cd service && pnpm vitest run`
+
+## RAG 知识库
+
+- **切块**：markdown/txt 按标题与段落切分，500 字窗口 + 50 字重叠（`rag/chunk.ts`）
+- **向量化**：OpenAI 兼容 embeddings 接口，支持独立服务商配置（`EMBEDDING_API_BASE_URL` / `EMBEDDING_API_KEY`）
+- **存储**：余弦相似度 + 持久化到 `service/data/vectors.json`（gitignore）
+- **摄取**：把文档放进 `service/knowledge/`，执行 `cd service && pnpm ingest`
+- **检索**：`rag_search` 工具 top-3 召回并附来源；embedding 不可用时自动降级关键词匹配（中英分词计分）
+
+## 技术亮点
+
+> 简历导向 —— 挑重点讲
+
+- **自研 Agent 内核**：不依赖 LangChain，用 ~400 行 TypeScript 实现 ReAct 循环、工具注册表、SSE 事件流与熔断机制，面试可逐行讲清
+- **安全工具执行**：calculator 自写递归下降解析器（杜绝 eval 注入）；read_file 路径白名单 + `..` 逃逸防护 + 100KB 限流
+- **多级容错**：工具异常错误文本回填自愈、步数/预算双熔断、embedding 失败关键词降级、前端 SSE 断流容错
+- **全链路可视化**：思考 / 工具调用 / 工具结果以控制台步骤流卡片（▎思考 / ├─▸ 工具）实时流式展示
+- **工程化完备**：vitest 单测（32 例覆盖循环熔断/工具/RAG）、type-check + eslint 全绿、conventional commits
+- **零外部依赖核心链**：除 LLM 与搜索 API 外，Agent 循环、RAG、前端渲染全部自主实现
+
+## 快速开始
+
+```bash
+# 1. 后端
+cd service
+cp .env.example .env   # 填入 API_KEY / OPENAI_API_BASE_URL / OPENAI_API_MODEL
+pnpm install
+pnpm start             # http://localhost:3002
+
+# 2. 前端（另开终端）
+pnpm install
+pnpm dev               # http://localhost:1002
+
+# 3.（可选）摄入知识库
+cd service
+pnpm ingest            # 扫描 service/knowledge/ 生成向量
+```
+
+打开前端 → 点击底部**机器人图标**开启 Agent 模式 → 提问"现在几点？再算算 100 天后是几号"，即可看到 get_time + calculator 的多步工具调用。
+
+## 配置说明
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `API_KEY` | LLM 服务商 API Key | 必填 |
+| `OPENAI_API_BASE_URL` / `OPENAI_API_MODEL` | Agent 循环使用的 OpenAI 兼容地址 / 模型 | - |
+| `AGENT_MAX_STEPS` | 最大工具调用步数（熔断） | `10` |
+| `AGENT_TOKEN_BUDGET` | 对话 token 预算（熔断） | `30000` |
+| `EMBEDDING_API_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` | RAG 向量化配置（可独立于聊天服务商） | 回退到 OPENAI_* / API_KEY |
+| `SEARCH_API_KEY` | web_search 工具（Tavily） | 未配置时工具降级提示 |
+
+## 目录结构
+
+```
+service/
+  src/
+    agent/        # Agent 内核：openaiClient / loop / registry / types
+    tools/        # 工具：calculator / getTime / webSearch / readFile / ragSearch
+    rag/          # RAG：chunk 切块 / embed 向量化 / store 向量库 / ingest 摄取
+    index.ts      # Express 服务：/chat-process 与 /agent-process
+    knowledge/    # 知识库文档（.md / .txt）
+src/              # Vue 3 前端：聊天页、ToolCallCard、Header(Agent 开关)
+```
