@@ -675,27 +675,27 @@ onUnmounted(() => {
     <footer :class="footerClass">
       <div class="w-full max-w-screen-xl m-auto">
         <div class="flex items-center justify-between space-x-2">
-          <HoverButton v-if="!isMobile" @click="handleClear">
+          <HoverButton v-if="!isMobile" tooltip="清空当前会话" placement="top" @click="handleClear">
             <span class="text-xl text-[#4f555e] dark:text-white">
               <SvgIcon icon="ri:delete-bin-line" />
             </span>
           </HoverButton>
-          <HoverButton v-if="!isMobile" @click="handleExport">
+          <HoverButton v-if="!isMobile" tooltip="导出会话为图片" placement="top" @click="handleExport">
             <span class="text-xl text-[#4f555e] dark:text-white">
               <SvgIcon icon="ri:download-2-line" />
             </span>
           </HoverButton>
-          <HoverButton @click="toggleAgentMode">
+          <HoverButton :tooltip="settingStore.agentMode ? 'Agent 模式：开（模型可自主调用工具）' : 'Agent 模式：关（纯对话）'" placement="top" @click="toggleAgentMode">
             <span class="text-xl" :class="{ 'text-[#0D9488]': settingStore.agentMode, 'text-[#4f555e] dark:text-white': !settingStore.agentMode }">
               <SvgIcon icon="ri:robot-2-line" />
             </span>
           </HoverButton>
-          <HoverButton @click="toggleUsingContext">
+          <HoverButton :tooltip="usingContext ? '上下文记忆：开（携带历史消息）' : '上下文记忆：关（单轮对话）'" placement="top" @click="toggleUsingContext">
             <span class="text-xl" :class="{ 'text-[#4b9e5f]': usingContext, 'text-[#a8071a]': !usingContext }">
               <SvgIcon icon="ri:chat-history-line" />
             </span>
           </HoverButton>
-          <HoverButton @click="toggleRecording">
+          <HoverButton :tooltip="isRecording ? '停止语音输入' : '语音输入'" placement="top" @click="toggleRecording">
             <span
               class="text-xl"
               :class="{ 'text-[#ef4444]': isRecording, 'text-[#4f555e] dark:text-white': !isRecording }"
