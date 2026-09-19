@@ -4,6 +4,9 @@ import type { ChatMessage } from './chatgpt'
 import { chatConfig, chatReplyProcess, currentModel } from './chatgpt'
 
 import { limiter } from './middleware/limiter'
+import { runAgent } from './agent/loop'
+import { list } from './agent/registry'
+import type { AgentEvent } from './agent/types'
 
 const app = express()
 const router = express.Router()
@@ -38,6 +41,34 @@ router.post('/chat-process', [limiter], async (req, res) => {
   }
   catch (error) {
     res.write(JSON.stringify(error))
+  }
+  finally {
+    res.end()
+  }
+})
+
+router.post('/agent-process', [limiter], async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders?.()
+
+  const { prompt, systemMessage } = req.body as RequestProps
+  const writeEvent = (event: AgentEvent) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`)
+  }
+
+  try {
+    // 传入当前已注册的全部工具；结束时 runAgent 会发出 answer 事件
+    await runAgent({
+      messages: [{ role: 'user', content: prompt }],
+      tools: list(),
+      systemMessage,
+      onEvent: writeEvent,
+    })
+  }
+  catch (error: any) {
+    writeEvent({ type: 'error', message: error?.message ?? String(error) })
   }
   finally {
     res.end()
