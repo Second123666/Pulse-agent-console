@@ -1,0 +1,111 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { runAgent } from './loop'
+import type { ChatCompletionResult } from './openaiClient'
+import type { AgentEvent, Tool } from './types'
+
+const { mockChatCompletion } = vi.hoisted(() => ({ mockChatCompletion: vi.fn() }))
+
+vi.mock('./openaiClient', () => ({
+  chatCompletion: mockChatCompletion,
+}))
+
+function textResult(content: string): ChatCompletionResult {
+  return { content, toolCalls: [], finishReason: 'stop' }
+}
+
+function toolCallsResult(calls: Array<{ name: string; args?: string }>): ChatCompletionResult {
+  return {
+    content: '我需要先调用工具确认一下。',
+    toolCalls: calls.map((call, i) => ({
+      id: `call_${i}`,
+      type: 'function',
+      function: { name: call.name, arguments: call.args ?? '{}' },
+    })),
+    finishReason: 'tool_calls',
+  }
+}
+
+const timeTool: Tool = {
+  name: 'get_time',
+  description: '返回当前时间',
+  parameters: {},
+  handler: () => '2026-09-19 10:00:00',
+}
+
+beforeEach(() => {
+  mockChatCompletion.mockReset()
+})
+
+describe('runAgent', () => {
+  it('纯文本：一轮直接输出最终回答', async () => {
+    mockChatCompletion.mockResolvedValueOnce(textResult('你好！'))
+    const events: string[] = []
+    await runAgent({ messages: [{ role: 'user', content: '你好' }], onEvent: e => events.push(e.type) })
+    expect(events).toEqual(['answer'])
+    expect(mockChatCompletion).toHaveBeenCalledTimes(1)
+  })
+
+  it('两轮工具调用：thought → tool_call → tool_result → answer，且工具结果回填给模型', async () => {
+    mockChatCompletion
+      .mockResolvedValueOnce(toolCallsResult([{ name: 'get_time' }]))
+      .mockResolvedValueOnce(textResult('现在是 2026-09-19 10:00:00'))
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '现在几点？' }],
+      tools: [timeTool],
+      onEvent: e => events.push(e),
+    })
+    expect(events.map(e => e.type)).toEqual(['thought', 'tool_call', 'tool_result', 'answer'])
+
+    const toolResult = events[2]
+    expect(toolResult.type === 'tool_result' && toolResult.content).toBe('2026-09-19 10:00:00')
+
+    // 第二次请求中应包含 role:'tool' 的工具结果消息
+    const secondRequestMessages = mockChatCompletion.mock.calls[1][0].messages
+    expect(secondRequestMessages.some((m: { role: string }) => m.role === 'tool')).toBe(true)
+  })
+
+  it('工具抛错：以错误文本回填（自愈），循环继续给出回答', async () => {
+    const badTool: Tool = {
+      name: 'boom',
+      description: '总是失败',
+      parameters: {},
+      handler: () => { throw new Error('kaboom') },
+    }
+    mockChatCompletion
+      .mockResolvedValueOnce(toolCallsResult([{ name: 'boom' }]))
+      .mockResolvedValueOnce(textResult('工具出错了，但我会继续'))
+    const events: AgentEvent[] = []
+    await runAgent({ messages: [{ role: 'user', content: '触发工具' }], tools: [badTool], onEvent: e => events.push(e) })
+
+    const toolResult = events.find(e => e.type === 'tool_result')
+    expect(toolResult?.type === 'tool_result' && toolResult.content).toContain('[tool error]')
+    expect(toolResult?.type === 'tool_result' && toolResult.content).toContain('kaboom')
+    expect(events.at(-1)?.type).toBe('answer')
+  })
+
+  it('步数熔断：注入熔断系统消息且仅一次，随后强制收尾', async () => {
+    // 模型始终要求调工具，模拟死循环
+    mockChatCompletion.mockResolvedValue(toolCallsResult([{ name: 'get_time' }]))
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '一直调用工具' }],
+      tools: [timeTool],
+      maxSteps: 1,
+      onEvent: e => events.push(e),
+    })
+
+    // 必然以 answer 收尾，且为强制截断回答
+    const lastEvent = events.at(-1)
+    expect(lastEvent?.type).toBe('answer')
+    if (lastEvent?.type === 'answer')
+      expect(lastEvent.content).toContain('截断')
+    // 调用次数受控（初始 1 轮 + 熔断后 1 轮）
+    expect(mockChatCompletion.mock.calls.length).toBeLessThanOrEqual(3)
+
+    // 熔断系统消息只注入一次（messages 为共享引用，只检查最后一次请求）
+    const lastMessages = mockChatCompletion.mock.calls.at(-1)![0].messages as Array<{ role: string; content: string }>
+    const systemInjected = lastMessages.filter(m => m.role === 'system' && m.content.includes('上限'))
+    expect(systemInjected).toHaveLength(1)
+  })
+})
