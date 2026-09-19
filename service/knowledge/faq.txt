@@ -1,0 +1,11 @@
+Q: Agent 循环最多跑多少步？
+A: 由 AGENT_MAX_STEPS 环境变量控制，默认 10 步。达到上限会触发熔断，要求模型立即总结收尾。
+
+Q: 工具调用出错会怎样？
+A: 工具异常会被捕获，以 [tool error] 错误文本回填给模型，模型可基于该信息自我纠正继续尝试。
+
+Q: 知识库文档放在哪里？
+A: 放在 service/knowledge/ 目录（.md/.txt），执行 pnpm ingest 切块并生成向量后入库。
+
+Q: 向量数据存在哪里？
+A: service/data/vectors.json，该目录已被 .gitignore 忽略，不会提交到仓库。

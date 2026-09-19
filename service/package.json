@@ -21,6 +21,7 @@
     "clean": "rimraf build",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
+    "ingest": "esno ./src/rag/ingest.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "common:cleanup": "rimraf node_modules && rimraf pnpm-lock.yaml"
