@@ -48,9 +48,12 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
       tool_choice: 'auto',
     })
 
-    // 无工具调用 → 直接给出最终回答
+    // 无工具调用 → 直接给出最终回答；若已熔断且模型未注明截断，兜底追加说明
     if (result.toolCalls.length === 0) {
-      options.onEvent({ type: 'answer', content: result.content ?? '' })
+      let content = result.content ?? ''
+      if (circuitBroken && !content.includes('提前截断'))
+        content = `${content}\n\n（因预算/步数限制提前截断）`
+      options.onEvent({ type: 'answer', content })
       return
     }
 
