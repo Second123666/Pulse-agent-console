@@ -62,6 +62,10 @@ const text = computed(() => {
   return value
 })
 
+const isThinking = computed(() => {
+  return props.loading && (props.text ?? '') === t('chat.thinking')
+})
+
 function highlightBlock(str: string, lang?: string) {
   return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-header__lang">${lang}</span><span class="code-block-header__copy">${t('chat.copyCode')}</span></div><code class="hljs code-block-body ${lang}">${str}</code></pre>`
 }
@@ -140,8 +144,13 @@ onUnmounted(() => {
   <div :class="wrapClass">
     <div ref="textRef" class="leading-relaxed break-words">
       <div v-if="!inversion">
-        <div v-if="!asRawText" class="markdown-body" :class="{ 'markdown-body-generate': loading }" v-html="text" />
-        <div v-else class="whitespace-pre-wrap" v-text="text" />
+        <div v-if="isThinking" class="thinking-dots" aria-label="思考中">
+          <span /><span /><span />
+        </div>
+        <template v-else>
+          <div v-if="!asRawText" class="markdown-body" :class="{ 'markdown-body-generate': loading }" v-html="text" />
+          <div v-else class="whitespace-pre-wrap" v-text="text" />
+        </template>
       </div>
       <div v-else class="whitespace-pre-wrap" v-text="text" />
     </div>

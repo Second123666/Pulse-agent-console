@@ -6,6 +6,7 @@ import Sider from './sider/index.vue'
 import Permission from './Permission.vue'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
 import { useAppStore, useAuthStore, useChatStore } from '@/store'
+import CommandPalette from '@/components/common/CommandPalette/index.vue'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -35,7 +36,7 @@ const getContainerClass = computed(() => {
 </script>
 
 <template>
-  <div class="h-full dark:bg-[#24272e] transition-all" :class="[isMobile ? 'p-0' : 'p-4']">
+  <div class="h-full bg-[var(--agent-bg)] dark:bg-[#0E1013] transition-all" :class="[isMobile ? 'p-0' : 'p-4']">
     <div class="h-full overflow-hidden" :class="getMobileClass">
       <NLayout class="z-40 transition" :class="getContainerClass" has-sider>
         <Sider />
@@ -47,5 +48,6 @@ const getContainerClass = computed(() => {
       </NLayout>
     </div>
     <Permission :visible="needPermission" />
+    <CommandPalette />
   </div>
 </template>

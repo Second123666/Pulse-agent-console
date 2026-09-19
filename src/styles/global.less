@@ -94,3 +94,81 @@ html.dark ::selection {
 		animation: none;
 	}
 }
+
+// ---- 品牌字标 ----
+.pulse-brand {
+	font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+		monospace;
+	letter-spacing: 0.18em;
+	color: var(--agent-text);
+}
+
+// ---- 思考中脉冲三点 ----
+.thinking-dots {
+	display: inline-flex;
+	gap: 5px;
+	align-items: center;
+	padding: 4px 2px;
+
+	span {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--agent-accent);
+		animation: thinking-pulse 1.2s ease-in-out infinite;
+
+		&:nth-child(2) {
+			animation-delay: 0.15s;
+		}
+
+		&:nth-child(3) {
+			animation-delay: 0.3s;
+		}
+	}
+}
+
+@keyframes thinking-pulse {
+	0%,
+	60%,
+	100% {
+		opacity: 0.35;
+		transform: scale(0.85);
+	}
+
+	30% {
+		opacity: 1;
+		transform: scale(1.1);
+	}
+}
+
+// ---- 输入框聚焦光环 ----
+.n-input:focus-within,
+.n-input--focus {
+	box-shadow: 0 0 0 3px var(--agent-accent-soft) !important;
+	transition: box-shadow 150ms ease;
+}
+
+// ---- 按钮按压微交互 ----
+.n-button {
+	transition:
+		transform 100ms ease,
+		box-shadow 150ms ease,
+		background-color 150ms ease,
+		color 150ms ease;
+
+	&:active:not(.n-button--disabled) {
+		transform: scale(0.96);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.thinking-dots span {
+		animation: none;
+		opacity: 1;
+		transform: none;
+	}
+
+	.n-button:active:not(.n-button--disabled) {
+		transform: none;
+	}
+}

@@ -6,6 +6,7 @@ import { storeToRefs } from 'pinia'
 import { NAutoComplete, NButton, NInput, useDialog, useMessage } from 'naive-ui'
 import { toPng } from 'html-to-image'
 import { Message } from './components'
+import EmptyState from './components/EmptyState/index.vue'
 import { useScroll } from './hooks/useScroll'
 import { useChat } from './hooks/useChat'
 import { useUsingContext } from './hooks/useUsingContext'
@@ -58,6 +59,11 @@ dataSources.value.forEach((item, index) => {
 
 function handleSubmit() {
   onConversation()
+}
+
+function handleExampleSelect(example: string) {
+  prompt.value = example
+  handleSubmit()
 }
 
 async function onConversation() {
@@ -580,10 +586,7 @@ onUnmounted(() => {
         <div class="w-full max-w-screen-xl m-auto dark:bg-[#101014]" :class="[isMobile ? 'p-2' : 'p-4']">
           <div id="image-wrapper" class="relative">
             <template v-if="!dataSources.length">
-              <div class="flex items-center justify-center mt-4 text-center text-neutral-300">
-                <SvgIcon icon="ri:bubble-chart-fill" class="mr-2 text-3xl" />
-                <span>{{ t('chat.newChatTitle') }}</span>
-              </div>
+              <EmptyState @select="handleExampleSelect" />
             </template>
             <template v-else>
               <div>

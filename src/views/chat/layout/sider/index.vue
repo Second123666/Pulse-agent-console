@@ -6,7 +6,7 @@ import List from './List.vue'
 import Footer from './Footer.vue'
 import { useAppStore, useChatStore } from '@/store'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { PromptStore, SvgIcon } from '@/components/common'
+import { BrandLogo, PromptStore, SvgIcon } from '@/components/common'
 import { t } from '@/locales'
 
 const appStore = useAppStore()
@@ -87,6 +87,17 @@ watch(
     @update-collapsed="handleUpdateCollapsed"
   >
     <div class="flex flex-col h-full" :style="mobileSafeArea">
+      <header class="flex items-center gap-2.5 px-4 pt-4 pb-1 select-none">
+        <BrandLogo :size="28" />
+        <div class="leading-tight">
+          <div class="text-[15px] font-semibold tracking-wide pulse-brand">
+            PULSE
+          </div>
+          <div class="text-[11px] text-[var(--agent-text-dim)] font-mono">
+            agent console
+          </div>
+        </div>
+      </header>
       <main class="flex flex-col flex-1 min-h-0">
         <div class="p-4">
           <NButton dashed block @click="handleAdd">
