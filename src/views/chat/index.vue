@@ -73,6 +73,10 @@ function handleReply(text: string) {
   inputRef.value?.focus?.()
 }
 
+function toggleAgentMode() {
+  settingStore.updateSetting({ agentMode: !settingStore.agentMode })
+}
+
 async function onConversation() {
   let message = prompt.value
 
@@ -679,6 +683,11 @@ onUnmounted(() => {
           <HoverButton v-if="!isMobile" @click="handleExport">
             <span class="text-xl text-[#4f555e] dark:text-white">
               <SvgIcon icon="ri:download-2-line" />
+            </span>
+          </HoverButton>
+          <HoverButton @click="toggleAgentMode">
+            <span class="text-xl" :class="{ 'text-[#0D9488]': settingStore.agentMode, 'text-[#4f555e] dark:text-white': !settingStore.agentMode }">
+              <SvgIcon icon="ri:robot-2-line" />
             </span>
           </HoverButton>
           <HoverButton @click="toggleUsingContext">
