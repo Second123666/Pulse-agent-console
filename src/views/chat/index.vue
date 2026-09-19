@@ -49,7 +49,8 @@ const voices = ref<SpeechSynthesisVoice[]>([])
 const promptStore = usePromptStore()
 
 // 使用storeToRefs，保证store修改后，联想部分能够重新渲染
-const { promptList: promptTemplate } = storeToRefs<any>(promptStore)
+// PromptList 类型为空元组，这里显式声明为 prompt 列表结构
+const { promptList: promptTemplate } = storeToRefs(promptStore) as { promptList: { value: Array<{ key: string; value: string }> } }
 
 // 未知原因刷新页面，loading 状态不会重置，手动重置
 dataSources.value.forEach((item, index) => {
@@ -64,6 +65,11 @@ function handleSubmit() {
 function handleExampleSelect(example: string) {
   prompt.value = example
   handleSubmit()
+}
+
+function handleReply(text: string) {
+  prompt.value = text
+  inputRef.value?.focus?.()
 }
 
 async function onConversation() {
