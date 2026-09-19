@@ -8,6 +8,7 @@ import { runAgent } from './agent/loop'
 import { list } from './agent/registry'
 import type { AgentEvent } from './agent/types'
 import './tools'
+import { loadMcpTools } from './mcp'
 
 const app = express()
 const router = express.Router()
@@ -121,6 +122,19 @@ router.post('/verify', async (req, res) => {
 app.use('', router)
 app.use('/api', router)
 app.set('trust proxy', 1)
+
+// 可选：MCP 兼容层 —— 从 MCP_SERVERS 环境变量拉取工具并桥接进 registry
+// 例：MCP_SERVERS=[{"name":"demo","url":"http://localhost:3000/mcp"}]（配置格式错误时静默忽略）
+try {
+  const mcpServers = JSON.parse(process.env.MCP_SERVERS ?? '[]') as Array<{ name: string; url: string }>
+  loadMcpTools(mcpServers).then((count) => {
+    if (count > 0)
+      globalThis.console.log(`[mcp] 桥接完成，共 ${count} 个工具`)
+  })
+}
+catch {
+  // MCP_SERVERS 格式非法时忽略，不影响服务启动
+}
 
 const server = app.listen(3002, () => globalThis.console.log('Server is running on port 3002'))
 
