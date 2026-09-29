@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { NButton } from 'naive-ui'
 import { useRouter } from 'vue-router'
+import { SignalScene } from '@/components/common'
 
 const router = useRouter()
 
@@ -11,20 +12,13 @@ function goHome() {
 
 <template>
   <div class="flex h-full">
-    <div class="px-4 m-auto space-y-4 text-center max-[400px]">
-      <h1 class="text-4xl text-slate-800 dark:text-neutral-200">
-        Sorry, page not found!
-      </h1>
-      <p class="text-base text-slate-500 dark:text-neutral-400">
-        Sorry, we couldn’t find the page you’re looking for. Perhaps you’ve mistyped the URL? Be sure to check your spelling.
+    <div class="px-4 m-auto space-y-5 text-center max-w-[400px]">
+      <SignalScene variant="lost" code="404" caption="这个地址没有对应页面" />
+      <p class="text-sm text-slate-500 dark:text-neutral-400">
+        检查一下链接是否拼错，或者回到工作台重新开始。
       </p>
-      <div class="flex items-center justify-center text-center">
-        <div class="w-[300px]">
-          <img src="../../../icons/404.svg" alt="404">
-        </div>
-      </div>
       <NButton type="primary" @click="goHome">
-        Go to Home
+        回到工作台
       </NButton>
     </div>
   </div>

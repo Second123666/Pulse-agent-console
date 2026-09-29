@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import { fetchVerify } from '@/api'
 import { useAuthStore } from '@/store'
-import Icon403 from '@/icons/403.vue'
+import { SignalScene } from '@/components/common'
 
 interface Props {
   visible: boolean
@@ -55,16 +55,10 @@ function handlePress(event: KeyboardEvent) {
   <NModal :show="visible" style="width: 90%; max-width: 640px">
     <div class="p-10 bg-white rounded dark:bg-slate-800">
       <div class="space-y-4">
-        <header class="space-y-2">
-          <h2 class="text-2xl font-bold text-center text-slate-800 dark:text-neutral-200">
-            403
-          </h2>
-          <p class="text-base text-center text-slate-500 dark:text-slate-500">
-            {{ $t('common.unauthorizedTips') }}
-          </p>
-          <Icon403 class="w-[200px] m-auto" />
+        <header>
+          <SignalScene variant="blocked" code="403" caption="需要访问口令" />
         </header>
-        <NInput v-model:value="token" type="password" placeholder="" @keypress="handlePress" />
+        <NInput v-model:value="token" type="password" placeholder="访问口令" @keypress="handlePress" />
         <NButton
           block
           type="primary"
