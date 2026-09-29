@@ -1,5 +1,5 @@
 import { agentConfig } from '../utils/config'
-import { type OpenAIMessage, type OpenAITool, chatCompletion } from './openaiClient'
+import { type OpenAIMessage, type OpenAITool, chatCompletionStream } from './openaiClient'
 import type { AgentRunOptions } from './types'
 
 /** 熔断提示词：要求模型立刻总结收尾（仅注入一次） */
@@ -42,11 +42,15 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
       circuitBroken = true
     }
 
-    const result = await chatCompletion({
-      messages,
-      tools: openAITools,
-      tool_choice: 'auto',
-    })
+    // 流式调用：文本增量实时转发给前端，定稿仍走下方的 thought / answer 事件
+    const result = await chatCompletionStream(
+      {
+        messages,
+        tools: openAITools,
+        tool_choice: 'auto',
+      },
+      delta => options.onEvent({ type: 'text_delta', content: delta }),
+    )
 
     // 无工具调用 → 直接给出最终回答；若已熔断且模型未注明截断，兜底追加说明
     if (result.toolCalls.length === 0) {

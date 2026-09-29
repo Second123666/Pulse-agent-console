@@ -67,7 +67,7 @@ export function fetchVerify<T>(token: string) {
 
 /** Agent 模式 SSE 事件（与后端 /agent-process 推送格式对应） */
 export interface AgentEvent {
-  type: 'thought' | 'tool_call' | 'tool_result' | 'answer' | 'error'
+  type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'answer' | 'error'
   content?: string
   id?: string
   name?: string

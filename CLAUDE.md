@@ -94,7 +94,7 @@ pnpm 11 默认不跑依赖的 postinstall，而 `runDepsStatusCheck` 在**任何
 ```yaml
 allowBuilds:
   esbuild: true
-  vue-demi: true   # 仅前端需要
+  vue-demi: true # 仅前端需要
 ```
 
 **不要**写进 `package.json` 的 `pnpm` 字段 —— pnpm 11 已不再读取，只会打印 warning 并忽略。

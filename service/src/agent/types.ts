@@ -3,6 +3,8 @@ import type { OpenAIToolCall } from './openaiClient'
 /** Agent 运行过程中通过 onEvent 逐条推送的流式事件（判别联合） */
 export type AgentEvent =
   | { type: 'thought'; content: string }
+  /** 模型文本增量，仅用于实时渲染；定稿仍以 thought / answer 为准 */
+  | { type: 'text_delta'; content: string }
   | { type: 'tool_call'; id: string; name: string; arguments: string }
   | { type: 'tool_result'; id: string; name: string; content: string }
   | { type: 'answer'; content: string }

@@ -3,10 +3,10 @@ import { runAgent } from './loop'
 import type { ChatCompletionResult } from './openaiClient'
 import type { AgentEvent, Tool } from './types'
 
-const { mockChatCompletion } = vi.hoisted(() => ({ mockChatCompletion: vi.fn() }))
+const { mockChatCompletionStream } = vi.hoisted(() => ({ mockChatCompletionStream: vi.fn() }))
 
 vi.mock('./openaiClient', () => ({
-  chatCompletion: mockChatCompletion,
+  chatCompletionStream: mockChatCompletionStream,
 }))
 
 function textResult(content: string): ChatCompletionResult {
@@ -25,6 +25,18 @@ function toolCallsResult(calls: Array<{ name: string; args?: string }>): ChatCom
   }
 }
 
+/**
+ * 把 mock 结果包装成流式调用：content 作为增量经 onDelta 回调一次。
+ * 真实实现会把 content 拆成多片，此处从简；分片累积逻辑由 openaiClient 自身保证。
+ */
+function asStream(result: ChatCompletionResult) {
+  return (_options: unknown, onDelta?: (content: string) => void) => {
+    if (result.content && onDelta)
+      onDelta(result.content)
+    return Promise.resolve(result)
+  }
+}
+
 const timeTool: Tool = {
   name: 'get_time',
   description: '返回当前时间',
@@ -33,35 +45,44 @@ const timeTool: Tool = {
 }
 
 beforeEach(() => {
-  mockChatCompletion.mockReset()
+  mockChatCompletionStream.mockReset()
 })
 
 describe('runAgent', () => {
-  it('纯文本：一轮直接输出最终回答', async () => {
-    mockChatCompletion.mockResolvedValueOnce(textResult('你好！'))
-    const events: string[] = []
-    await runAgent({ messages: [{ role: 'user', content: '你好' }], onEvent: e => events.push(e.type) })
-    expect(events).toEqual(['answer'])
-    expect(mockChatCompletion).toHaveBeenCalledTimes(1)
+  it('纯文本：一轮直接输出最终回答，且文本增量先于 answer 发出', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('你好！')))
+    const events: AgentEvent[] = []
+    await runAgent({ messages: [{ role: 'user', content: '你好' }], onEvent: e => events.push(e) })
+
+    expect(events.map(e => e.type)).toEqual(['text_delta', 'answer'])
+    expect(events[0].type === 'text_delta' && events[0].content).toBe('你好！')
+    expect(mockChatCompletionStream).toHaveBeenCalledTimes(1)
   })
 
-  it('两轮工具调用：thought → tool_call → tool_result → answer，且工具结果回填给模型', async () => {
-    mockChatCompletion
-      .mockResolvedValueOnce(toolCallsResult([{ name: 'get_time' }]))
-      .mockResolvedValueOnce(textResult('现在是 2026-09-19 10:00:00'))
+  it('两轮工具调用：text_delta → thought → tool_call → tool_result → answer，且工具结果回填给模型', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'get_time' }])))
+      .mockImplementationOnce(asStream(textResult('现在是 2026-09-19 10:00:00')))
     const events: AgentEvent[] = []
     await runAgent({
       messages: [{ role: 'user', content: '现在几点？' }],
       tools: [timeTool],
       onEvent: e => events.push(e),
     })
-    expect(events.map(e => e.type)).toEqual(['thought', 'tool_call', 'tool_result', 'answer'])
+    expect(events.map(e => e.type)).toEqual([
+      'text_delta',
+      'thought',
+      'tool_call',
+      'tool_result',
+      'text_delta',
+      'answer',
+    ])
 
-    const toolResult = events[2]
-    expect(toolResult.type === 'tool_result' && toolResult.content).toBe('2026-09-19 10:00:00')
+    const toolResult = events.find(e => e.type === 'tool_result')
+    expect(toolResult?.type === 'tool_result' && toolResult.content).toBe('2026-09-19 10:00:00')
 
     // 第二次请求中应包含 role:'tool' 的工具结果消息
-    const secondRequestMessages = mockChatCompletion.mock.calls[1][0].messages
+    const secondRequestMessages = mockChatCompletionStream.mock.calls[1][0].messages
     expect(secondRequestMessages.some((m: { role: string }) => m.role === 'tool')).toBe(true)
   })
 
@@ -72,9 +93,9 @@ describe('runAgent', () => {
       parameters: {},
       handler: () => { throw new Error('kaboom') },
     }
-    mockChatCompletion
-      .mockResolvedValueOnce(toolCallsResult([{ name: 'boom' }]))
-      .mockResolvedValueOnce(textResult('工具出错了，但我会继续'))
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'boom' }])))
+      .mockImplementationOnce(asStream(textResult('工具出错了，但我会继续')))
     const events: AgentEvent[] = []
     await runAgent({ messages: [{ role: 'user', content: '触发工具' }], tools: [badTool], onEvent: e => events.push(e) })
 
@@ -86,7 +107,7 @@ describe('runAgent', () => {
 
   it('步数熔断：注入熔断系统消息且仅一次，随后强制收尾', async () => {
     // 模型始终要求调工具，模拟死循环
-    mockChatCompletion.mockResolvedValue(toolCallsResult([{ name: 'get_time' }]))
+    mockChatCompletionStream.mockImplementation(asStream(toolCallsResult([{ name: 'get_time' }])))
     const events: AgentEvent[] = []
     await runAgent({
       messages: [{ role: 'user', content: '一直调用工具' }],
@@ -101,10 +122,10 @@ describe('runAgent', () => {
     if (lastEvent?.type === 'answer')
       expect(lastEvent.content).toContain('截断')
     // 调用次数受控（初始 1 轮 + 熔断后 1 轮）
-    expect(mockChatCompletion.mock.calls.length).toBeLessThanOrEqual(3)
+    expect(mockChatCompletionStream.mock.calls.length).toBeLessThanOrEqual(3)
 
     // 熔断系统消息只注入一次（messages 为共享引用，只检查最后一次请求）
-    const lastMessages = mockChatCompletion.mock.calls.at(-1)![0].messages as Array<{ role: string; content: string }>
+    const lastMessages = mockChatCompletionStream.mock.calls.at(-1)![0].messages as Array<{ role: string; content: string }>
     const systemInjected = lastMessages.filter(m => m.role === 'system' && m.content.includes('上限'))
     expect(systemInjected).toHaveLength(1)
   })

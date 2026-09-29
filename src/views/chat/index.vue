@@ -24,6 +24,9 @@ const openLongReply = import.meta.env.VITE_GLOB_OPEN_LONG_REPLY === 'true'
 /** Agent 模式携带的历史消息条数上限（取最近 N 条，防止超长会话撑爆模型上下文） */
 const AGENT_HISTORY_LIMIT = 20
 
+/** Agent 流式渲染节流间隔（毫秒）：避免每个 token 都触发一次全量状态写盘 */
+const AGENT_STREAM_THROTTLE_MS = 60
+
 const route = useRoute()
 const dialog = useDialog()
 const ms = useMessage()
@@ -130,17 +133,30 @@ async function onConversation() {
   // Agent 模式：走 /agent-process，SSE 逐事件渲染；thought/tool_call/tool_result 汇入 agentSteps 由 ToolCallCard 展示
   const onAgentConversation = async () => {
     const agentSteps: Chat.AgentStep[] = []
+    // 实时增量缓冲：text_delta 累积于此并即时渲染。
+    // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖
+    let streamBuffer = ''
+    let lastRenderAt = 0
+    const renderStream = () => {
+      const now = Date.now()
+      if (now - lastRenderAt < AGENT_STREAM_THROTTLE_MS)
+        return
+      lastRenderAt = now
+      updateChatSome(+uuid, dataSources.value.length - 1, { text: streamBuffer, loading: true })
+      scrollToBottomIfAtBottom()
+    }
+
     // 历史上下文：排除末尾两条（本轮 user 消息与助手占位消息），只取纯文本，剔除出错与空消息
     // usingContext 关闭时传空数组，退化为单轮对话
     const history = usingContext.value
       ? dataSources.value
-          .slice(0, -2)
-          .slice(-AGENT_HISTORY_LIMIT)
-          .filter(item => !item.error && !!item.text && item.text.trim() !== '')
-          .map(item => ({
-            role: (item.inversion ? 'user' : 'assistant') as 'user' | 'assistant',
-            content: item.text,
-          }))
+        .slice(0, -2)
+        .slice(-AGENT_HISTORY_LIMIT)
+        .filter(item => !item.error && !!item.text && item.text.trim() !== '')
+        .map(item => ({
+          role: (item.inversion ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: item.text,
+        }))
       : []
 
     await fetchAgentProcess({
@@ -149,9 +165,17 @@ async function onConversation() {
       messages: history,
       signal: controller.signal,
       onEvent: (event) => {
-        if (event.type === 'thought') {
-          agentSteps.push({ type: 'thought', content: event.content })
-          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
+        if (event.type === 'text_delta') {
+          streamBuffer += event.content ?? ''
+          renderStream()
+        }
+        else if (event.type === 'thought') {
+          // 该轮模型调用了工具，已流式渲染的文本归属「思考」；优先用缓冲，回退到事件内容
+          const thoughtText = streamBuffer || event.content || ''
+          if (thoughtText.trim() !== '')
+            agentSteps.push({ type: 'thought', content: thoughtText })
+          streamBuffer = ''
+          updateChatSome(+uuid, dataSources.value.length - 1, { text: '', agentSteps: [...agentSteps] })
         }
         else if (event.type === 'tool_call') {
           agentSteps.push({ type: 'tool_call', id: event.id, name: event.name, arguments: event.arguments })
@@ -162,6 +186,8 @@ async function onConversation() {
           updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
         }
         else if (event.type === 'answer') {
+          // 定稿：用完整文本覆盖流式缓冲
+          streamBuffer = ''
           updateChat(
             +uuid,
             dataSources.value.length - 1,
@@ -179,6 +205,7 @@ async function onConversation() {
           scrollToBottomIfAtBottom()
         }
         else if (event.type === 'error') {
+          streamBuffer = ''
           updateChatSome(
             +uuid,
             dataSources.value.length - 1,
