@@ -123,12 +123,17 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onE
           const payload = trimmed.slice(5).trim()
           if (!payload)
             continue
+          // 只捕获 JSON.parse 的失败（半截帧等，解析不了属预期）。
+          // 不把 onEvent 包进来：回调内的异常若被吞掉，会成为静默失败的根源
+          let event: AgentEvent
           try {
-            onEvent(JSON.parse(payload) as AgentEvent)
+            event = JSON.parse(payload) as AgentEvent
           }
           catch {
             // 忽略无法解析的帧
+            continue
           }
+          onEvent(event)
         }
       }
     })

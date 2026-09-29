@@ -15,7 +15,14 @@ export function createLocalStorage(options?: { expire?: number | null }) {
     }
 
     const json = JSON.stringify(storageData)
-    window.localStorage.setItem(key, json)
+    try {
+      window.localStorage.setItem(key, json)
+    }
+    catch (error) {
+      // 配额超限等写入失败时降级：内存态（Pinia）继续工作，仅持久化失效，不向上抛出
+      // （抛出会打断 onConversation 流程，表现为对话莫名报错）
+      globalThis.console?.warn?.('[storage] localStorage 写入失败（可能配额已满），本次仅保留内存态', error)
+    }
   }
 
   function get(key: string) {

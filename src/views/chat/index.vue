@@ -27,6 +27,9 @@ const AGENT_HISTORY_LIMIT = 20
 /** Agent 流式渲染节流间隔（毫秒）：避免每个 token 都触发一次全量状态写盘 */
 const AGENT_STREAM_THROTTLE_MS = 60
 
+/** agentSteps 落盘时单个 tool_result 内容的字符数上限（超长会随每次写盘重复序列化，撑爆 localStorage） */
+const AGENT_TOOL_RESULT_MAX_CHARS = 2000
+
 const route = useRoute()
 const dialog = useDialog()
 const ms = useMessage()
@@ -182,7 +185,12 @@ async function onConversation() {
           updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
         }
         else if (event.type === 'tool_result') {
-          agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content: event.content })
+          // 落盘前裁剪超长结果（截断版本随 agentSteps 持久化，完整内容已在当轮上下文中回填过模型）
+          const rawContent = event.content ?? ''
+          const content = rawContent.length > AGENT_TOOL_RESULT_MAX_CHARS
+            ? `${rawContent.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}\n[已截断：原 ${rawContent.length} 字符]`
+            : rawContent
+          agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content })
           updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
         }
         else if (event.type === 'answer') {
