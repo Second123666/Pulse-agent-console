@@ -48,6 +48,7 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
         messages,
         tools: openAITools,
         tool_choice: 'auto',
+        signal: options.signal,
       },
       delta => options.onEvent({ type: 'text_delta', content: delta }),
     )

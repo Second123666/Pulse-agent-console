@@ -136,4 +136,25 @@ describe('chatCompletionStream', () => {
       .rejects
       .toMatchObject({ name: 'OpenAIError', status: 401 })
   })
+
+  it('调用方中止：原样抛出 AbortError，不伪装成超时错误', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      controller.abort()
+      return Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    }))
+
+    await expect(
+      chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }], signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('内部超时：AbortError 被包装为超时的 OpenAIError', async () => {
+    // 未传 signal，中止只能来自内部定时器 → 应包装为超时错误
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+
+    await expect(chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] }))
+      .rejects
+      .toMatchObject({ name: 'OpenAIError', status: 0, message: 'Chat completions request timed out' })
+  })
 })

@@ -60,6 +60,19 @@ router.post('/agent-process', [limiter], async (req, res) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
 
+  // 客户端断开（用户点停止 / 关页面）时中止循环，避免后端继续跑完并消耗 token
+  const controller = new AbortController()
+  res.on('close', () => {
+    // writableEnded 为 false 说明是客户端提前断开，而非本轮正常结束
+    if (!res.writableEnded) {
+      controller.abort()
+      globalThis.console.log('[agent] 客户端断开，已中止 Agent 循环')
+    }
+  })
+
+  // SSE 保活：长工具调用期间连接空闲可能被中间层掐断
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000)
+
   try {
     // 历史上下文（缺省为空数组，此时行为与单轮对话完全一致）
     const history = Array.isArray(messages) ? messages : []
@@ -68,13 +81,17 @@ router.post('/agent-process', [limiter], async (req, res) => {
       messages: [...history, { role: 'user', content: prompt }],
       tools: list(),
       systemMessage,
+      signal: controller.signal,
       onEvent: writeEvent,
     })
   }
   catch (error: any) {
-    writeEvent({ type: 'error', message: error?.message ?? String(error) })
+    // 客户端主动中止属正常路径，不当作错误上报（连接已断，写了也没人收）
+    if (error?.name !== 'AbortError')
+      writeEvent({ type: 'error', message: error?.message ?? String(error) })
   }
   finally {
+    clearInterval(heartbeat)
     res.end()
   }
 })

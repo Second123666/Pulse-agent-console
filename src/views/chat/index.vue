@@ -275,7 +275,7 @@ async function onConversation() {
   catch (error: any) {
     const errorMessage = error?.message ?? t('common.wrong')
 
-    if (error.message === 'canceled' || error?.name === 'AbortError') {
+    if (error?.message === 'canceled' || error?.name === 'AbortError') {
       updateChatSome(
         +uuid,
         dataSources.value.length - 1,

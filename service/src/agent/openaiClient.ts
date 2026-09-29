@@ -150,6 +150,11 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
   }
 }
 
+/** 判断是否为调用方主动中止（区别于内部超时） */
+function isCallerAbort(options: ChatCompletionOptions, error: unknown): boolean {
+  return !!options.signal?.aborted && (error as { name?: string })?.name === 'AbortError'
+}
+
 /**
  * 流式版本：请求体带 `stream: true`，逐块解析上游 SSE。
  *
@@ -271,8 +276,12 @@ export async function chatCompletionStream(
   catch (error) {
     if (error instanceof OpenAIError)
       throw error
-    if (error?.name === 'AbortError')
+    if (error?.name === 'AbortError') {
+      // 调用方主动中止：原样抛出，便于上层按 AbortError 识别为正常路径而非故障
+      if (isCallerAbort(options, error))
+        throw error
       throw new OpenAIError('Chat completions request timed out', 0, '')
+    }
     throw error
   }
   finally {

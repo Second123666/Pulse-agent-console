@@ -105,6 +105,28 @@ describe('runAgent', () => {
     expect(events.at(-1)?.type).toBe('answer')
   })
 
+  it('透传 signal 给 chatCompletionStream', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('ok')))
+    const controller = new AbortController()
+    await runAgent({
+      messages: [{ role: 'user', content: 'hi' }],
+      signal: controller.signal,
+      onEvent: () => {},
+    })
+    expect(mockChatCompletionStream.mock.calls[0][0].signal).toBe(controller.signal)
+  })
+
+  it('上游中止：AbortError 向上抛出而非转成 error 事件', async () => {
+    const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' })
+    mockChatCompletionStream.mockRejectedValueOnce(abortError)
+    const events: AgentEvent[] = []
+    await expect(
+      runAgent({ messages: [{ role: 'user', content: 'hi' }], onEvent: e => events.push(e) }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    // 中止是正常路径，不应产生任何事件（尤其是 error）
+    expect(events).toHaveLength(0)
+  })
+
   it('步数熔断：注入熔断系统消息且仅一次，随后强制收尾', async () => {
     // 模型始终要求调工具，模拟死循环
     mockChatCompletionStream.mockImplementation(asStream(toolCallsResult([{ name: 'get_time' }])))

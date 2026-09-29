@@ -31,6 +31,8 @@ export interface AgentRunOptions {
   maxSteps?: number
   /** token 预算，缺省读 AGENT_TOKEN_BUDGET */
   tokenBudget?: number
+  /** 中止信号：客户端断开时中止循环，避免继续消耗 token */
+  signal?: AbortSignal
 }
 
 export type { OpenAIToolCall }
