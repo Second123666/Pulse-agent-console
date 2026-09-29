@@ -14,9 +14,9 @@ const NON_CJK_TOKEN_RATIO = 1 / 4
 function isCjk(char: string): boolean {
   const code = char.codePointAt(0) ?? 0
   return (
-    (code >= 0x4e00 && code <= 0x9fff)
-    || (code >= 0x3040 && code <= 0x30ff)
-    || (code >= 0xac00 && code <= 0xd7af)
+    (code >= 0x4E00 && code <= 0x9FFF)
+    || (code >= 0x3040 && code <= 0x30FF)
+    || (code >= 0xAC00 && code <= 0xD7AF)
   )
 }
 

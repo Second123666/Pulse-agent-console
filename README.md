@@ -87,7 +87,7 @@ ReAct（Reasoning + Acting）让模型交替进行「推理」与「工具调用
 |------|------|------|
 | calculator | `service/src/tools/calculator.ts` | 安全四则运算（自研递归下降解析，**禁 eval**） |
 | get_time | `service/src/tools/getTime.ts` | 当前时间 / IANA 时区换算（零依赖） |
-| web_search | `service/src/tools/webSearch.ts` | 联网搜索（Tavily，无 key 时降级提示） |
+| web_search | `service/src/tools/webSearch.ts` | 联网搜索（博查 Web Search API，无 key 时降级提示） |
 | read_file | `service/src/tools/readFile.ts` | 只读仓库内文件（白名单 + 100KB 上限） |
 | rag_search | `service/src/tools/ragSearch.ts` | 知识库语义检索（embedding 不可用时关键词降级） |
 
@@ -172,7 +172,7 @@ pnpm ingest            # 扫描 service/knowledge/ 生成向量
 | `AGENT_MAX_STEPS` | 最大工具调用步数（熔断） | `10` |
 | `AGENT_TOKEN_BUDGET` | 对话 token 预算（熔断） | `30000` |
 | `EMBEDDING_API_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` | RAG 向量化配置（可独立于聊天服务商） | 回退到 OPENAI_* / API_KEY |
-| `SEARCH_API_KEY` | web_search 工具（Tavily） | 未配置时工具降级提示 |
+| `SEARCH_API_KEY` | web_search 工具（博查 https://open.bochaai.com） | 未配置时工具降级提示 |
 
 ## 目录结构
 
