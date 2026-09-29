@@ -5,6 +5,21 @@ import type { AgentRunOptions } from './types'
 /** 熔断提示词：要求模型立刻总结收尾（仅注入一次） */
 const BREAKER_PROMPT = '你已达到最大步数或 Token 预算上限。请立即给出最终总结回答并收尾，不要再次调用任何工具。在回答末尾注明「（因预算/步数限制提前截断）」。'
 
+/** token 估算系数：CJK 字符（中日韩）约 1 字符 ≈ 1 token，可按实测调整 */
+const CJK_TOKEN_RATIO = 1
+/** token 估算系数：非 CJK 字符约 4 字符 ≈ 1 token */
+const NON_CJK_TOKEN_RATIO = 1 / 4
+
+/** 粗略判断 CJK 字符（CJK 统一表意 + 日文假名 + 谚文） */
+function isCjk(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0
+  return (
+    (code >= 0x4e00 && code <= 0x9fff)
+    || (code >= 0x3040 && code <= 0x30ff)
+    || (code >= 0xac00 && code <= 0xd7af)
+  )
+}
+
 /** ReAct 主循环：调模型 → 有 tool_calls 则执行并回填 → 否则输出最终回答 */
 export async function runAgent(options: AgentRunOptions): Promise<void> {
   const maxSteps = Math.max(1, options.maxSteps ?? agentConfig.agentMaxSteps)
@@ -25,10 +40,19 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
   for (const m of options.messages)
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })
 
-  // 粗略 token 估算：按字符数 /4 计，用于预算熔断
+  // 粗略 token 估算：CJK 按字计、其余按字符数 /4 计，用于预算熔断
+  // （原版统一 /4 会把中文低估约 4 倍，长中文对话永远触发不了预算熔断）
   const estimateTokens = (): number =>
     messages.reduce(
-      (sum, m) => sum + ((m.content?.length ?? 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0)) / 4,
+      (sum, m) => {
+        const text = (m.content ?? '') + (m.tool_calls ? JSON.stringify(m.tool_calls) : '')
+        let cjk = 0
+        for (const char of text) {
+          if (isCjk(char))
+            cjk++
+        }
+        return sum + cjk * CJK_TOKEN_RATIO + (text.length - cjk) * NON_CJK_TOKEN_RATIO
+      },
       0,
     )
 
@@ -88,9 +112,24 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
 
     stepCount++
 
-    // 熔断已注入且模型仍要求工具 → 强制收尾，防止死循环
+    // 熔断已注入且模型仍要求工具 → 再发一次请求并禁用工具，强制模型输出文本总结（防死循环）；
+    // 若强制请求失败或模型仍返回工具调用，退回光秃截断提示，保证必有 answer 事件
     if (circuitBroken) {
-      options.onEvent({ type: 'answer', content: '（因预算/步数限制提前截断）' })
+      let content = ''
+      try {
+        const final = await chatCompletionStream(
+          { messages, tools: openAITools, tool_choice: 'none', signal: options.signal },
+          delta => options.onEvent({ type: 'text_delta', content: delta }),
+        )
+        if (final.toolCalls.length === 0 && final.content)
+          content = final.content
+      }
+      catch {
+        // 忽略，走下方兜底文案
+      }
+      if (!content.includes('提前截断'))
+        content = content ? `${content}\n\n（因预算/步数限制提前截断）` : '（因预算/步数限制提前截断）'
+      options.onEvent({ type: 'answer', content })
       return
     }
   }

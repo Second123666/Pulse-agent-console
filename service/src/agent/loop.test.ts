@@ -151,4 +151,46 @@ describe('runAgent', () => {
     const systemInjected = lastMessages.filter(m => m.role === 'system' && m.content.includes('上限'))
     expect(systemInjected).toHaveLength(1)
   })
+
+  it('中文长文本触发预算熔断：CJK 按 1 字 ≈ 1 token 计（旧算法 /4 会漏触发）', async () => {
+    // 200 个汉字：CJK 感知估算 ≈ 200 token > 预算 100（旧算法只有 50，不会触发）
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('好的，已收尾。（因预算/步数限制提前截断）')))
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '汉'.repeat(200) }],
+      tokenBudget: 100,
+      onEvent: e => events.push(e),
+    })
+
+    // 首次请求就应注入熔断系统消息
+    const firstMessages = mockChatCompletionStream.mock.calls[0][0].messages as Array<{ role: string; content: string }>
+    expect(firstMessages.some(m => m.role === 'system' && m.content.includes('上限'))).toBe(true)
+    expect(events.at(-1)?.type).toBe('answer')
+  })
+
+  it('熔断后模型仍要求工具：强制 tool_choice:none 再请求一次，回答为模型总结而非光秃截断提示', async () => {
+    // 200 个汉字 + 预算 100 → 首轮即熔断；首轮模型仍要求调工具
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'get_time' }])))
+      .mockImplementationOnce(asStream(textResult('总结：时间工具已返回结果。')))
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '汉'.repeat(200) }],
+      tools: [timeTool],
+      tokenBudget: 100,
+      onEvent: e => events.push(e),
+    })
+
+    // 工具确实执行过
+    expect(events.some(e => e.type === 'tool_result')).toBe(true)
+    // 强制收尾请求必须禁用工具
+    expect(mockChatCompletionStream.mock.calls[1][0].tool_choice).toBe('none')
+    // 最终回答来自模型的总结（含截断注明），而非光秃秃的截断提示
+    const lastEvent = events.at(-1)
+    expect(lastEvent?.type).toBe('answer')
+    if (lastEvent?.type === 'answer') {
+      expect(lastEvent.content).toContain('总结：时间工具已返回结果')
+      expect(lastEvent.content).toContain('提前截断')
+    }
+  })
 })
