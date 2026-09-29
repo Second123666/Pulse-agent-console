@@ -21,6 +21,9 @@ let controller = new AbortController()
 
 const openLongReply = import.meta.env.VITE_GLOB_OPEN_LONG_REPLY === 'true'
 
+/** Agent 模式携带的历史消息条数上限（取最近 N 条，防止超长会话撑爆模型上下文） */
+const AGENT_HISTORY_LIMIT = 20
+
 const route = useRoute()
 const dialog = useDialog()
 const ms = useMessage()
@@ -127,9 +130,23 @@ async function onConversation() {
   // Agent 模式：走 /agent-process，SSE 逐事件渲染；thought/tool_call/tool_result 汇入 agentSteps 由 ToolCallCard 展示
   const onAgentConversation = async () => {
     const agentSteps: Chat.AgentStep[] = []
+    // 历史上下文：排除末尾两条（本轮 user 消息与助手占位消息），只取纯文本，剔除出错与空消息
+    // usingContext 关闭时传空数组，退化为单轮对话
+    const history = usingContext.value
+      ? dataSources.value
+          .slice(0, -2)
+          .slice(-AGENT_HISTORY_LIMIT)
+          .filter(item => !item.error && !!item.text && item.text.trim() !== '')
+          .map(item => ({
+            role: (item.inversion ? 'user' : 'assistant') as 'user' | 'assistant',
+            content: item.text,
+          }))
+      : []
+
     await fetchAgentProcess({
       prompt: message,
       systemMessage: settingStore.systemMessage,
+      messages: history,
       signal: controller.signal,
       onEvent: (event) => {
         if (event.type === 'thought') {

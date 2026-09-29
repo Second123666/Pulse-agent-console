@@ -55,15 +55,17 @@ router.post('/agent-process', [limiter], async (req, res) => {
   res.setHeader('Connection', 'keep-alive')
   res.flushHeaders?.()
 
-  const { prompt, systemMessage } = req.body as RequestProps
+  const { prompt, systemMessage, messages } = req.body as RequestProps
   const writeEvent = (event: AgentEvent) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
 
   try {
+    // 历史上下文（缺省为空数组，此时行为与单轮对话完全一致）
+    const history = Array.isArray(messages) ? messages : []
     // 传入当前已注册的全部工具；结束时 runAgent 会发出 answer 事件
     await runAgent({
-      messages: [{ role: 'user', content: prompt }],
+      messages: [...history, { role: 'user', content: prompt }],
       tools: list(),
       systemMessage,
       onEvent: writeEvent,
