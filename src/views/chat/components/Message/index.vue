@@ -17,6 +17,8 @@ interface Props {
   error?: boolean
   loading?: boolean
   agentSteps?: Chat.AgentStep[]
+  /** Agent 连接静默超时：显示「连接可能已中断」+ 手动重试 */
+  agentStalled?: boolean
 }
 
 interface Emit {
@@ -131,6 +133,18 @@ async function handleCopy() {
             :as-raw-text="asRawText"
           />
           <ToolCallCard v-if="agentSteps?.length && !inversion" :steps="agentSteps" />
+          <div
+            v-if="agentStalled && !inversion"
+            class="flex items-center gap-3 mt-2 px-3 py-2 text-xs rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700"
+          >
+            <span>连接可能已中断（长时间未收到响应）</span>
+            <button
+              class="px-2 py-0.5 rounded border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition"
+              @click="handleRegenerate"
+            >
+              重试
+            </button>
+          </div>
         </div>
         <div class="flex flex-col">
           <button

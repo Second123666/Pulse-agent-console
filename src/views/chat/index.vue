@@ -30,6 +30,9 @@ const AGENT_STREAM_THROTTLE_MS = 60
 /** agentSteps 落盘时单个 tool_result 内容的字符数上限（超长会随每次写盘重复序列化，撑爆 localStorage） */
 const AGENT_TOOL_RESULT_MAX_CHARS = 2000
 
+/** Agent 连接静默超时（毫秒）：超过此时长没收到任何事件则提示「连接可能已中断」 */
+const AGENT_SILENCE_TIMEOUT_MS = 30000
+
 const route = useRoute()
 const dialog = useDialog()
 const ms = useMessage()
@@ -67,9 +70,11 @@ const promptStore = usePromptStore()
 const { promptList: promptTemplate } = storeToRefs(promptStore) as { promptList: { value: Array<{ key: string; value: string }> } }
 
 // 未知原因刷新页面，loading 状态不会重置，手动重置
+// agentStalled 同理：刷新后连接必然已断，旧的「连接可能已中断」提示是陈旧信息，一并清掉
+// （消息本身还在，用户仍可用常规的「重新生成」按钮重试）
 dataSources.value.forEach((item, index) => {
-  if (item.loading)
-    updateChatSome(+uuid, index, { loading: false })
+  if (item.loading || item.agentStalled)
+    updateChatSome(+uuid, index, { loading: false, agentStalled: false })
 })
 
 function handleSubmit() {
@@ -92,7 +97,7 @@ function toggleAgentMode() {
 
 /** Agent 对话核心：向 userMsgIndex + 1 处的助手占位消息流式写入，onConversation 与 onRegenerate 共用。
  * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。 */
-async function runAgentConversation(promptText: string, signal: AbortSignal, userMsgIndex: number, options: Chat.ConversationRequest = {}) {
+async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}) {
   const targetIndex = userMsgIndex + 1
   const agentSteps: Chat.AgentStep[] = []
   // 实时增量缓冲：text_delta 累积于此并即时渲染。
@@ -121,12 +126,43 @@ async function runAgentConversation(promptText: string, signal: AbortSignal, use
       }))
     : []
 
+  // 静默超时：每个事件都重置计时；超时未收到任何事件 → 标记 stalled（气泡内提示 + 手动重试）
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null
+  const clearSilenceTimer = () => {
+    if (silenceTimer) {
+      clearTimeout(silenceTimer)
+      silenceTimer = null
+    }
+  }
+  const resetSilenceTimer = () => {
+    clearSilenceTimer()
+    silenceTimer = setTimeout(() => {
+      silenceTimer = null
+      // 连接可能已中断：中止这个已无意义的请求（释放输入框与「停止」按钮，否则重试会被 loading 挡住），
+      // 提示用户手动重试。不自动重试 —— Agent 循环有副作用（工具已执行、token 已消耗），自动重试会重复执行并重复计费
+      controller.abort()
+      updateChatSome(+uuid, targetIndex, { loading: false, agentStalled: true })
+    }, AGENT_SILENCE_TIMEOUT_MS)
+  }
+
   await fetchAgentProcess({
     prompt: promptText,
     systemMessage: settingStore.systemMessage,
     messages: history,
-    signal,
+    signal: controller.signal,
+    onStateChange: (state) => {
+      // connecting 就开始计时：连接被静默黑洞化时（服务端接了连接却永不响应）根本等不到首个事件，
+      // 只在 live 后计时会让这种最需要提示的情况反而检测不到
+      if (state === 'connecting' || state === 'live')
+        resetSilenceTimer()
+      else if (state === 'closed')
+        clearSilenceTimer()
+    },
     onEvent: (event) => {
+      // 收到任何事件都说明连接仍活着：清掉中断提示并重置静默计时
+      if (getChatByUuidAndIndex(+uuid, targetIndex)?.agentStalled)
+        updateChatSome(+uuid, targetIndex, { loading: true, agentStalled: false })
+      resetSilenceTimer()
       if (event.type === 'text_delta') {
         streamBuffer += event.content ?? ''
         renderStream()
@@ -155,6 +191,7 @@ async function runAgentConversation(promptText: string, signal: AbortSignal, use
       else if (event.type === 'answer') {
         // 定稿：用完整文本覆盖流式缓冲
         streamBuffer = ''
+        clearSilenceTimer()
         updateChat(
           +uuid,
           targetIndex,
@@ -164,6 +201,7 @@ async function runAgentConversation(promptText: string, signal: AbortSignal, use
             inversion: false,
             error: false,
             loading: true,
+            agentStalled: false,
             agentSteps: [...agentSteps],
             conversationOptions: null,
             requestOptions: { prompt: promptText, options: { ...options } },
@@ -181,6 +219,7 @@ async function runAgentConversation(promptText: string, signal: AbortSignal, use
       }
     },
   })
+  clearSilenceTimer()
   updateChatSome(+uuid, targetIndex, { loading: false })
 }
 
@@ -235,7 +274,7 @@ async function onConversation() {
   try {
     if (settingStore.agentMode) {
       // 本轮 user 消息位于倒数第二（助手占位在最后）
-      await runAgentConversation(message, controller.signal, dataSources.value.length - 2, options)
+      await runAgentConversation(message, controller, dataSources.value.length - 2, options)
     }
     else {
       let lastText = ''
@@ -355,8 +394,9 @@ async function onRegenerate(index: number) {
 
   loading.value = true
 
-  // 该消息此前由 Agent 生成（含 agentSteps）或当前开着 Agent 模式 → 重试仍走 /agent-process
-  const useAgent = settingStore.agentMode || !!dataSources.value[index].agentSteps?.length
+  // 该消息此前由 Agent 生成（agentSteps 字段存在，可能为空数组——本轮没用工具）或当前开着 Agent 模式
+  // → 重试仍走 /agent-process。用 Array.isArray 而非 length 判定：空数组也是 Agent 产物
+  const useAgent = settingStore.agentMode || Array.isArray(dataSources.value[index].agentSteps)
 
   updateChat(
     +uuid,
@@ -368,6 +408,7 @@ async function onRegenerate(index: number) {
       error: false,
       loading: true,
       agentSteps: [],
+      agentStalled: false,
       conversationOptions: null,
       requestOptions: { prompt: message, options: { ...options } },
     },
@@ -376,7 +417,7 @@ async function onRegenerate(index: number) {
   try {
     if (useAgent) {
       // 被重试的助手消息位于 index，其对应的 user 消息在 index - 1
-      await runAgentConversation(message, controller.signal, index - 1, options)
+      await runAgentConversation(message, controller, index - 1, options)
       updateChatSome(+uuid, index, { loading: false })
     }
     else {
@@ -727,6 +768,7 @@ onUnmounted(() => {
                   v-for="(item, index) of dataSources" :key="index" :date-time="item.dateTime" :text="item.text"
                   :inversion="item.inversion" :error="item.error" :loading="item.loading" :quote="item.quote"
                   :agent-steps="item.agentSteps"
+                  :agent-stalled="item.agentStalled"
                   @regenerate="onRegenerate(index)" @delete="handleDelete(index)" @reply="handleReply"
                   @speak="speakText"
                 />

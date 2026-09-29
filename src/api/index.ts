@@ -75,6 +75,10 @@ export interface AgentEvent {
   message?: string
 }
 
+/** Agent 连接状态：connecting（请求已发出）→ live（已收到首个事件）→ closed（流结束或出错）；
+ *  stalled 由上层按「静默超时」判定，用于提示用户连接可能已中断 */
+export type AgentConnectionState = 'connecting' | 'live' | 'stalled' | 'closed'
+
 export interface FetchAgentProcessParams {
   prompt: string
   systemMessage?: string
@@ -83,14 +87,18 @@ export interface FetchAgentProcessParams {
   signal?: AbortSignal
   /** 每个 SSE 事件回调一次 */
   onEvent: (event: AgentEvent) => void
+  /** 连接状态变化回调（用于上层做静默超时提示与手动重试） */
+  onStateChange?: (state: AgentConnectionState) => void
 }
 
 /** 调用 /agent-process，SSE 逐帧解析并以回调方式暴露 */
-export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onEvent }: FetchAgentProcessParams): Promise<void> {
+export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onEvent, onStateChange }: FetchAgentProcessParams): Promise<void> {
   const authStore = useAuthStore()
   const controller = new AbortController()
   const onAbort = () => controller.abort()
   signal?.addEventListener('abort', onAbort)
+
+  onStateChange?.('connecting')
 
   return fetch(`${import.meta.env.VITE_GLOB_API_URL}/agent-process`, {
     method: 'POST',
@@ -108,6 +116,7 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onE
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
+      let live = false
       // 逐块读取，解析 SSE 的 data: 行
       while (true) {
         const { done, value } = await reader.read()
@@ -133,11 +142,21 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onE
             // 忽略无法解析的帧
             continue
           }
+          if (!live) {
+            live = true
+            onStateChange?.('live')
+          }
           onEvent(event)
         }
       }
     })
+    .catch((error) => {
+      // 读流中断（网络抖动 / 服务端异常关闭）也走这里
+      onStateChange?.('closed')
+      throw error
+    })
     .finally(() => {
       signal?.removeEventListener('abort', onAbort)
+      onStateChange?.('closed')
     })
 }

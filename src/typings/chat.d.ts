@@ -17,6 +17,8 @@ declare namespace Chat {
 		quote?: string
 		/** Agent 模式的思考与工具调用步骤流 */
 		agentSteps?: AgentStep[]
+		/** Agent 连接静默超时标记（超过 N 秒无事件），用于提示「连接可能已中断」+ 手动重试 */
+		agentStalled?: boolean
 		conversationOptions?: ConversationRequest | null
 		requestOptions: { prompt: string; options?: ConversationRequest | null }
 	}
