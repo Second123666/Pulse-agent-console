@@ -45,7 +45,11 @@ const { usingContext, toggleUsingContext } = useUsingContext()
 const { uuid } = route.params as { uuid: string }
 
 const dataSources = computed(() => chatStore.getChatByUuid(+uuid))
-const conversationList = computed(() => dataSources.value.filter(item => (!item.inversion && !!item.conversationOptions)))
+// 上下文链选取：取全部助手消息，而非只取带 conversationOptions 的。
+// 旧过滤会把 Agent 消息（conversationOptions 为 null）排除在外，导致 lastContext 跳过 Agent 轮次、
+// 错接到更早的普通轮次；现在取最近一条助手消息 —— 若它是 Agent 消息则 conversationOptions 为 null，
+// 普通模式自然从新一轮开始，不会接错链
+const conversationList = computed(() => dataSources.value.filter(item => !item.inversion))
 
 const prompt = ref<string>('')
 const loading = ref<boolean>(false)
@@ -84,6 +88,100 @@ function handleReply(text: string) {
 
 function toggleAgentMode() {
   settingStore.updateSetting({ agentMode: !settingStore.agentMode })
+}
+
+/** Agent 对话核心：向 userMsgIndex + 1 处的助手占位消息流式写入，onConversation 与 onRegenerate 共用。
+ * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。 */
+async function runAgentConversation(promptText: string, signal: AbortSignal, userMsgIndex: number, options: Chat.ConversationRequest = {}) {
+  const targetIndex = userMsgIndex + 1
+  const agentSteps: Chat.AgentStep[] = []
+  // 实时增量缓冲：text_delta 累积于此并即时渲染。
+  // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖
+  let streamBuffer = ''
+  let lastRenderAt = 0
+  const renderStream = () => {
+    const now = Date.now()
+    if (now - lastRenderAt < AGENT_STREAM_THROTTLE_MS)
+      return
+    lastRenderAt = now
+    updateChatSome(+uuid, targetIndex, { text: streamBuffer, loading: true })
+    scrollToBottomIfAtBottom()
+  }
+
+  // 历史上下文：取本轮 user 消息之前的消息，只取纯文本，剔除出错与空消息
+  // usingContext 关闭时传空数组，退化为单轮对话
+  const history = usingContext.value
+    ? dataSources.value
+      .slice(0, userMsgIndex)
+      .slice(-AGENT_HISTORY_LIMIT)
+      .filter(item => !item.error && !!item.text && item.text.trim() !== '')
+      .map(item => ({
+        role: (item.inversion ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: item.text,
+      }))
+    : []
+
+  await fetchAgentProcess({
+    prompt: promptText,
+    systemMessage: settingStore.systemMessage,
+    messages: history,
+    signal,
+    onEvent: (event) => {
+      if (event.type === 'text_delta') {
+        streamBuffer += event.content ?? ''
+        renderStream()
+      }
+      else if (event.type === 'thought') {
+        // 该轮模型调用了工具，已流式渲染的文本归属「思考」；优先用缓冲，回退到事件内容
+        const thoughtText = streamBuffer || event.content || ''
+        if (thoughtText.trim() !== '')
+          agentSteps.push({ type: 'thought', content: thoughtText })
+        streamBuffer = ''
+        updateChatSome(+uuid, targetIndex, { text: '', agentSteps: [...agentSteps] })
+      }
+      else if (event.type === 'tool_call') {
+        agentSteps.push({ type: 'tool_call', id: event.id, name: event.name, arguments: event.arguments })
+        updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
+      }
+      else if (event.type === 'tool_result') {
+        // 落盘前裁剪超长结果（截断版本随 agentSteps 持久化，完整内容已在当轮上下文中回填过模型）
+        const rawContent = event.content ?? ''
+        const content = rawContent.length > AGENT_TOOL_RESULT_MAX_CHARS
+          ? `${rawContent.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}\n[已截断：原 ${rawContent.length} 字符]`
+          : rawContent
+        agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content })
+        updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
+      }
+      else if (event.type === 'answer') {
+        // 定稿：用完整文本覆盖流式缓冲
+        streamBuffer = ''
+        updateChat(
+          +uuid,
+          targetIndex,
+          {
+            dateTime: new Date().toLocaleString(),
+            text: event.content ?? '',
+            inversion: false,
+            error: false,
+            loading: true,
+            agentSteps: [...agentSteps],
+            conversationOptions: null,
+            requestOptions: { prompt: promptText, options: { ...options } },
+          },
+        )
+        scrollToBottomIfAtBottom()
+      }
+      else if (event.type === 'error') {
+        streamBuffer = ''
+        updateChatSome(
+          +uuid,
+          targetIndex,
+          { text: `[Agent 错误] ${event.message ?? ''}`, error: true, loading: false },
+        )
+      }
+    },
+  })
+  updateChatSome(+uuid, targetIndex, { loading: false })
 }
 
 async function onConversation() {
@@ -133,101 +231,11 @@ async function onConversation() {
   )
   scrollToBottom()
 
-  // Agent 模式：走 /agent-process，SSE 逐事件渲染；thought/tool_call/tool_result 汇入 agentSteps 由 ToolCallCard 展示
-  const onAgentConversation = async () => {
-    const agentSteps: Chat.AgentStep[] = []
-    // 实时增量缓冲：text_delta 累积于此并即时渲染。
-    // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖
-    let streamBuffer = ''
-    let lastRenderAt = 0
-    const renderStream = () => {
-      const now = Date.now()
-      if (now - lastRenderAt < AGENT_STREAM_THROTTLE_MS)
-        return
-      lastRenderAt = now
-      updateChatSome(+uuid, dataSources.value.length - 1, { text: streamBuffer, loading: true })
-      scrollToBottomIfAtBottom()
-    }
-
-    // 历史上下文：排除末尾两条（本轮 user 消息与助手占位消息），只取纯文本，剔除出错与空消息
-    // usingContext 关闭时传空数组，退化为单轮对话
-    const history = usingContext.value
-      ? dataSources.value
-        .slice(0, -2)
-        .slice(-AGENT_HISTORY_LIMIT)
-        .filter(item => !item.error && !!item.text && item.text.trim() !== '')
-        .map(item => ({
-          role: (item.inversion ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: item.text,
-        }))
-      : []
-
-    await fetchAgentProcess({
-      prompt: message,
-      systemMessage: settingStore.systemMessage,
-      messages: history,
-      signal: controller.signal,
-      onEvent: (event) => {
-        if (event.type === 'text_delta') {
-          streamBuffer += event.content ?? ''
-          renderStream()
-        }
-        else if (event.type === 'thought') {
-          // 该轮模型调用了工具，已流式渲染的文本归属「思考」；优先用缓冲，回退到事件内容
-          const thoughtText = streamBuffer || event.content || ''
-          if (thoughtText.trim() !== '')
-            agentSteps.push({ type: 'thought', content: thoughtText })
-          streamBuffer = ''
-          updateChatSome(+uuid, dataSources.value.length - 1, { text: '', agentSteps: [...agentSteps] })
-        }
-        else if (event.type === 'tool_call') {
-          agentSteps.push({ type: 'tool_call', id: event.id, name: event.name, arguments: event.arguments })
-          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
-        }
-        else if (event.type === 'tool_result') {
-          // 落盘前裁剪超长结果（截断版本随 agentSteps 持久化，完整内容已在当轮上下文中回填过模型）
-          const rawContent = event.content ?? ''
-          const content = rawContent.length > AGENT_TOOL_RESULT_MAX_CHARS
-            ? `${rawContent.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}\n[已截断：原 ${rawContent.length} 字符]`
-            : rawContent
-          agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content })
-          updateChatSome(+uuid, dataSources.value.length - 1, { agentSteps: [...agentSteps] })
-        }
-        else if (event.type === 'answer') {
-          // 定稿：用完整文本覆盖流式缓冲
-          streamBuffer = ''
-          updateChat(
-            +uuid,
-            dataSources.value.length - 1,
-            {
-              dateTime: new Date().toLocaleString(),
-              text: event.content ?? '',
-              inversion: false,
-              error: false,
-              loading: true,
-              agentSteps: [...agentSteps],
-              conversationOptions: null,
-              requestOptions: { prompt: message, options: { ...options } },
-            },
-          )
-          scrollToBottomIfAtBottom()
-        }
-        else if (event.type === 'error') {
-          streamBuffer = ''
-          updateChatSome(
-            +uuid,
-            dataSources.value.length - 1,
-            { text: `[Agent 错误] ${event.message ?? ''}`, error: true, loading: false },
-          )
-        }
-      },
-    })
-    updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
-  }
-
+  // Agent 模式：走 /agent-process（核心逻辑抽为 runAgentConversation，onRegenerate 共用）
   try {
     if (settingStore.agentMode) {
-      await onAgentConversation()
+      // 本轮 user 消息位于倒数第二（助手占位在最后）
+      await runAgentConversation(message, controller.signal, dataSources.value.length - 2, options)
     }
     else {
       let lastText = ''
@@ -347,6 +355,9 @@ async function onRegenerate(index: number) {
 
   loading.value = true
 
+  // 该消息此前由 Agent 生成（含 agentSteps）或当前开着 Agent 模式 → 重试仍走 /agent-process
+  const useAgent = settingStore.agentMode || !!dataSources.value[index].agentSteps?.length
+
   updateChat(
     +uuid,
     index,
@@ -356,60 +367,69 @@ async function onRegenerate(index: number) {
       inversion: false,
       error: false,
       loading: true,
+      agentSteps: [],
       conversationOptions: null,
       requestOptions: { prompt: message, options: { ...options } },
     },
   )
 
   try {
-    let lastText = ''
-    const fetchChatAPIOnce = async () => {
-      await fetchChatAPIProcess<Chat.ConversationResponse>({
-        prompt: message,
-        options,
-        signal: controller.signal,
-        onDownloadProgress: ({ event }) => {
-          const xhr = event.target
-          const { responseText } = xhr
-          // Always process the final line
-          const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
-          let chunk = responseText
-          if (lastIndex !== -1)
-            chunk = responseText.substring(lastIndex)
-          try {
-            const data = JSON.parse(chunk)
-            updateChat(
-              +uuid,
-              index,
-              {
-                dateTime: new Date().toLocaleString(),
-                text: lastText + (data.text ?? ''),
-                inversion: false,
-                error: false,
-                loading: true,
-                conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
-                requestOptions: { prompt: message, options: { ...options } },
-              },
-            )
-
-            if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
-              options.parentMessageId = data.id
-              lastText = data.text
-              message = ''
-              return fetchChatAPIOnce()
-            }
-          }
-          catch (error) {
-            //
-          }
-        },
-      })
+    if (useAgent) {
+      // 被重试的助手消息位于 index，其对应的 user 消息在 index - 1
+      await runAgentConversation(message, controller.signal, index - 1, options)
       updateChatSome(+uuid, index, { loading: false })
     }
-    await fetchChatAPIOnce()
+    else {
+      let lastText = ''
+      const fetchChatAPIOnce = async () => {
+        await fetchChatAPIProcess<Chat.ConversationResponse>({
+          prompt: message,
+          options,
+          signal: controller.signal,
+          onDownloadProgress: ({ event }) => {
+            const xhr = event.target
+            const { responseText } = xhr
+            // Always process the final line
+            const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
+            let chunk = responseText
+            if (lastIndex !== -1)
+              chunk = responseText.substring(lastIndex)
+            try {
+              const data = JSON.parse(chunk)
+              updateChat(
+                +uuid,
+                index,
+                {
+                  dateTime: new Date().toLocaleString(),
+                  text: lastText + (data.text ?? ''),
+                  inversion: false,
+                  error: false,
+                  loading: true,
+                  conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+                  requestOptions: { prompt: message, options: { ...options } },
+                },
+              )
+
+              if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
+                options.parentMessageId = data.id
+                lastText = data.text
+                message = ''
+                return fetchChatAPIOnce()
+              }
+            }
+            catch (error) {
+              //
+            }
+          },
+        })
+        updateChatSome(+uuid, index, { loading: false })
+      }
+      await fetchChatAPIOnce()
+    }
   }
   catch (error: any) {
-    if (error.message === 'canceled') {
+    // AbortError 为用户主动停止（Agent 链路 fetch 中止抛 AbortError），静默处理
+    if (error?.message === 'canceled' || error?.name === 'AbortError') {
       updateChatSome(
         +uuid,
         index,
