@@ -4,6 +4,11 @@ import type { ChatMessage } from './chatgpt'
 import { chatConfig, chatReplyProcess, currentModel } from './chatgpt'
 
 import { limiter } from './middleware/limiter'
+import { requireAuth } from './middleware/auth'
+import { authRouter } from './auth/routes'
+import { getJwtSecret } from './auth/secret'
+import { getDb } from './store/db'
+import { authConfig } from './utils/config'
 import { runAgent } from './agent/loop'
 import { list } from './agent/registry'
 import type { AgentEvent } from './agent/types'
@@ -23,7 +28,8 @@ app.all('*', (_, res, next) => {
   next()
 })
 
-router.post('/chat-process', [limiter], async (req, res) => {
+// 需登录：否则任何人可 curl 消耗服务端 API key 与额度（requireAuth 见 middleware/auth.ts）
+router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
   res.setHeader('Content-type', 'application/octet-stream')
 
   try {
@@ -49,7 +55,7 @@ router.post('/chat-process', [limiter], async (req, res) => {
   }
 })
 
-router.post('/agent-process', [limiter], async (req, res) => {
+router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -117,6 +123,10 @@ router.post('/session', async (req, res) => {
   }
 })
 
+/**
+ * @deprecated 旧版前端门禁口令校验，已被 /auth/login（JWT）取代。
+ * 仅为兼容未升级的前端保留；AUTH_SECRET_KEY 现语义为注册邀请码。
+ */
 router.post('/verify', async (req, res) => {
   try {
     const { token } = req.body
@@ -138,9 +148,25 @@ router.post('/verify', async (req, res) => {
   }
 })
 
+app.use('', authRouter)
+app.use('/api', authRouter)
 app.use('', router)
 app.use('/api', router)
 app.set('trust proxy', 1)
+
+// 鉴权自检：数据库可用性与鉴权模式在启动时明确打出，避免运行中才发现配置问题
+try {
+  getDb()
+  getJwtSecret()
+  globalThis.console.log(
+    authConfig.inviteCode
+      ? '[auth] 用户数据库就绪；已配置邀请码（AUTH_SECRET_KEY），注册需携带'
+      : '[auth] 用户数据库就绪；未配置邀请码，开放注册（首个注册用户将成为管理员）',
+  )
+}
+catch (error: any) {
+  globalThis.console.error('[auth] 用户数据库初始化失败，注册/登录将不可用：', error?.message ?? error)
+}
 
 // 可选：MCP 兼容层 —— 从 MCP_SERVERS 环境变量拉取工具并桥接进 registry
 // 例：MCP_SERVERS=[{"name":"demo","url":"http://localhost:3000/mcp"}]（配置格式错误时静默忽略）

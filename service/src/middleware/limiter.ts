@@ -16,4 +16,17 @@ const limiter = rateLimit({
   },
 })
 
-export { limiter }
+/**
+ * 登录/注册专用限流：防暴力破解（按 IP，15 分钟内最多 20 次失败）。
+ * 与全局 limiter 不同，这里**不**受 MAX_REQUEST_PER_HOUR 影响，始终生效；
+ * 且只统计失败请求，正常用户不会被自己成功登录的次数拖累。
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  skipSuccessfulRequests: true,
+  statusCode: 429,
+  message: { status: 'Fail', message: '尝试过于频繁，请 15 分钟后再试', data: null },
+})
+
+export { authLimiter, limiter }

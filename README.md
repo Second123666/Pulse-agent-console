@@ -173,6 +173,13 @@ pnpm ingest            # 扫描 service/knowledge/ 生成向量
 | `AGENT_TOKEN_BUDGET` | 对话 token 预算（熔断） | `30000` |
 | `EMBEDDING_API_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` | RAG 向量化配置（可独立于聊天服务商） | 回退到 OPENAI_* / API_KEY |
 | `SEARCH_API_KEY` | web_search 工具（博查 https://open.bochaai.com） | 未配置时工具降级提示 |
+| `JWT_SECRET` | JWT 签名密钥（登录态） | 未配置则每次启动生成临时密钥（重启后登录态失效） |
+| `AUTH_SECRET_KEY` | 注册邀请码（**语义已变更**，不再是登录口令） | 不配置则开放注册，首个注册用户成为管理员 |
+| `AUTH_TOKEN_TTL` | 登录态有效期（秒） | `604800`（7 天） |
+
+### 鉴权
+
+`/chat-process`、`/agent-process` 均需 `Authorization: Bearer <JWT>`，未携带或无效一律 `401`（此前后端无任何校验，任何人可 curl 消耗你的 API key 与额度）。用户体系为自建：`scrypt` 哈希密码 + 手写 HS256 JWT（验签用 `timingSafeEqual`，拒绝 `alg:none` 算法混淆）。端点：`POST /auth/register`、`POST /auth/login`、`GET /auth/me`。
 
 ## 目录结构
 
@@ -182,6 +189,8 @@ service/
     agent/        # Agent 内核：openaiClient / loop / registry / types
     tools/        # 工具：calculator / getTime / webSearch / readFile / ragSearch
     rag/          # RAG：chunk 切块 / embed 向量化 / store 向量库 / ingest 摄取
+    auth/         # 鉴权：password(scrypt) / jwt(手写 HS256) / users / routes
+    store/        # 存储：node:sqlite 封装（Node 24 内置，零依赖）
     index.ts      # Express 服务：/chat-process 与 /agent-process
     knowledge/    # 知识库文档（.md / .txt）
 src/              # Vue 3 前端：聊天页、ToolCallCard、Header(Agent 开关)
