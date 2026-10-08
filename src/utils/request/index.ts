@@ -41,7 +41,11 @@ function http<T = any>(
     // 后端错误体形如 { status:'Fail', message }，优先取它 —— 否则用户只能看到
     // axios 的 "Request failed with status code 401"，登录失败原因会被吞掉
     const message = error?.response?.data?.message || error?.message
-    throw new Error(message || 'Error')
+    const wrapped = new Error(message || 'Error') as Error & { response?: any }
+    // 保留原始响应：调用方（如路由守卫）需要按状态码区分 401（登录态失效）与其他错误，
+    // 丢掉它会让「token 失效」被误判成「后端异常」，进而把用户甩到 /500
+    wrapped.response = error?.response
+    throw wrapped
   }
 
   beforeRequest?.()
