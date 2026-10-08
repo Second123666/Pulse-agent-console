@@ -1,5 +1,5 @@
 import type { AxiosProgressEvent, GenericAbortSignal } from 'axios'
-import { post } from '@/utils/request'
+import { get, post } from '@/utils/request'
 import { useAuthStore, useSettingStore } from '@/store'
 
 export function fetchChatAPI<T = any>(
@@ -65,6 +65,40 @@ export function fetchVerify<T>(token: string) {
   })
 }
 
+/** 后端 /auth/* 返回的公开用户信息（不含 password_hash / salt） */
+export interface AuthUser {
+  id: number
+  username: string
+  role: 'admin' | 'user'
+}
+
+/** 登录 / 注册成功后的会话载荷：JWT + 用户信息 */
+export interface AuthSessionPayload {
+  token: string
+  user: AuthUser
+}
+
+export function fetchLogin<T = AuthSessionPayload>(username: string, password: string) {
+  return post<T>({
+    url: '/auth/login',
+    data: { username, password },
+  })
+}
+
+export function fetchRegister<T = AuthSessionPayload>(username: string, password: string, inviteCode?: string) {
+  return post<T>({
+    url: '/auth/register',
+    data: { username, password, inviteCode },
+  })
+}
+
+/** 当前登录用户：应用启动时用它校验本地 token 是否仍然有效 */
+export function fetchMe<T = { user: AuthUser }>() {
+  return get<T>({
+    url: '/auth/me',
+  })
+}
+
 /** Agent 模式 SSE 事件（与后端 /agent-process 推送格式对应） */
 export interface AgentEvent {
   type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'answer' | 'error'
@@ -110,6 +144,12 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onE
     signal: controller.signal,
   })
     .then(async (response) => {
+      // 走的是原生 fetch（不经过 axios），401 需在此单独处理：清 token + 回登录页
+      if (response.status === 401) {
+        authStore.handleUnauthorized()
+        throw new Error('登录状态已过期，请重新登录')
+      }
+
       if (!response.ok || !response.body)
         throw new Error(`Agent 请求失败：HTTP ${response.status}`)
 

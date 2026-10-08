@@ -36,9 +36,12 @@ function http<T = any>(
     return Promise.reject(res.data)
   }
 
-  const failHandler = (error: Response<Error>) => {
+  const failHandler = (error: any) => {
     afterRequest?.()
-    throw new Error(error?.message || 'Error')
+    // 后端错误体形如 { status:'Fail', message }，优先取它 —— 否则用户只能看到
+    // axios 的 "Request failed with status code 401"，登录失败原因会被吞掉
+    const message = error?.response?.data?.message || error?.message
+    throw new Error(message || 'Error')
   }
 
   beforeRequest?.()
