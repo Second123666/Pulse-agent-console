@@ -52,6 +52,10 @@ router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
     res.write(`data: ${JSON.stringify(chat)}\n\n`)
   }
 
+  // SSE 保活：模型思考期间连接空闲可能被中间层掐断（与 /agent-process 一致）
+  // 注释帧（':' 开头）不是 data: 行，前端解析器天然忽略
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000)
+
   try {
     const { prompt, options = {}, systemMessage, temperature, top_p } = req.body as RequestProps
     await chatReplyProcess({
@@ -66,12 +70,14 @@ router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
   }
   catch (error: any) {
     // 客户端主动中止属正常路径，不当作错误上报（连接已断，写了也没人收）
+    // chatReplyProcess 在客户端中止时原样上抛 AbortError，此处据 name 静默
     if (error?.name !== 'AbortError') {
       const message = error?.message ?? 'Please check the back-end console'
       res.write(`data: ${JSON.stringify({ status: 'Fail', message })}\n\n`)
     }
   }
   finally {
+    clearInterval(heartbeat)
     res.end()
   }
 })

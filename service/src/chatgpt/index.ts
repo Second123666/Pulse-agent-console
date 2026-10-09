@@ -61,6 +61,9 @@ function buildHistory(parentMessageId?: string): Array<{ role: 'user' | 'assista
 
 async function chatReplyProcess(options: RequestOptions) {
   const { message, lastContext, process, systemMessage, temperature, top_p } = options
+  // 超时与客户端中止都会让 fetch 抛 AbortError，靠这个标志区分（catch 里要用，故声明在 try 外）：
+  // 只有「内部超时」该报给用户，「客户端中止」是正常路径
+  let timedOut = false
   try {
     const parentMessageId = lastContext?.parentMessageId
     const conversationId = (parentMessageId && messageStore.get(parentMessageId)?.conversationId)
@@ -81,7 +84,10 @@ async function chatReplyProcess(options: RequestOptions) {
       global.console.log(`[API] model: ${model} | messages: ${messages.length} | prompt: ${message.slice(0, 50)}`)
 
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
     // 外部信号（客户端断开）联动中止上游请求；读取结束后统一清理监听
     const onExternalAbort = () => controller.abort()
     options.signal?.addEventListener('abort', onExternalAbort)
@@ -170,8 +176,13 @@ async function chatReplyProcess(options: RequestOptions) {
     return sendResponse({ type: 'Success', data: { id: assistantMessage.id, text: assistantMessage.content, conversationId } })
   }
   catch (error: any) {
+    // 客户端主动中止（用户点停止 / 关页面）：原样上抛，由调用方按 error.name 静默处理。
+    // 不能在此转成 Fail —— 连接已断没人收，且每次停止都刷一段堆栈
+    if (options.signal?.aborted)
+      throw error
+
     global.console.log(error)
-    const failMessage = error?.name === 'AbortError'
+    const failMessage = timedOut
       ? 'Request timed out'
       : (error?.message ?? 'Please check the back-end console')
     return sendResponse({ type: 'Fail', message: failMessage })
