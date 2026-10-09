@@ -182,7 +182,8 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
       }
       else if (event.type === 'tool_result') {
-        // 落盘前裁剪超长结果（截断版本随 agentSteps 持久化，完整内容已在当轮上下文中回填过模型）
+        // 落盘前裁剪超长结果：后端已按 AGENT_TOOL_RESULT_MAX_CHARS（默认 8000）截断一份喂给模型，
+        // 这里再截更短的一份（2000），只关落盘体积与渲染，不影响模型实际看到的内容
         const rawContent = event.content ?? ''
         const content = rawContent.length > AGENT_TOOL_RESULT_MAX_CHARS
           ? `${rawContent.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}\n[已截断：原 ${rawContent.length} 字符]`
