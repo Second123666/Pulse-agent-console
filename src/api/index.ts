@@ -99,6 +99,65 @@ export function fetchMe<T = { user: AuthUser }>() {
   })
 }
 
+/** 服务端会话消息（与后端 messages 表列对应） */
+export interface ServerMessage {
+  role: 'user' | 'assistant'
+  content: string
+  agentSteps?: Chat.AgentStep[]
+  /** 其余展示字段：dateTime / inversion / error / quote / requestOptions / conversationOptions */
+  meta?: Record<string, any> | null
+  createdAt: number
+}
+
+/** 服务端会话（含消息） */
+export interface ServerConversation {
+  uuid: number
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: ServerMessage[]
+}
+
+/** 会话元信息（不含消息体） */
+export interface ServerConversationMeta {
+  uuid: number
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+/** 会话元信息列表（侧边栏用） */
+export function fetchConversationList<T = { conversations: ServerConversationMeta[] }>() {
+  return post<T>({
+    url: '/conversation/list',
+  })
+}
+
+/** 取会话（含消息）；uuid 省略时返回全部 —— 启动水合走这条 */
+export function fetchConversationGet<T = { conversations: ServerConversation[] }>(uuid?: number) {
+  return post<T>({
+    url: '/conversation/get',
+    data: uuid === undefined ? {} : { uuid },
+  })
+}
+
+/** 全量保存（服务端按 uuid upsert 并裁掉未提交的会话） */
+export function fetchConversationSave<T = { saved: number; deleted: number }>(conversations: ServerConversation[]) {
+  return post<T>({
+    url: '/conversation/save',
+    data: { conversations },
+  })
+}
+
+/** 删除单个会话（连带其消息） */
+export function fetchConversationDelete<T = { deleted: boolean }>(uuid: number) {
+  return post<T>({
+    url: '/conversation/delete',
+    data: { uuid },
+  })
+}
+
 /** Agent 模式 SSE 事件（与后端 /agent-process 推送格式对应） */
 export interface AgentEvent {
   type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'answer' | 'error'

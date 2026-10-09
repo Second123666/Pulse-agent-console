@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { getToken, removeToken, setToken } from './helper'
 import type { AuthSessionPayload, AuthUser } from '@/api'
 import { store } from '@/store/helper'
+import { useChatStore } from '@/store/modules/chat'
 import { fetchLogin, fetchMe, fetchRegister, fetchSession } from '@/api'
 
 interface SessionResponse {
@@ -87,6 +88,9 @@ export const useAuthStore = defineStore('auth-store', {
 
     /** 退出登录：JWT 无状态，清掉本地登录态即可 */
     logout() {
+      // 同时复位会话同步状态：否则同一浏览器换账号登录时，
+      // 会把上一个账号的本地会话同步进新账号（跨账号串数据）
+      useChatStore().resetForLogout()
       this.removeToken()
       this.user = null
     },

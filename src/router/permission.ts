@@ -1,5 +1,6 @@
 import type { Router } from 'vue-router'
 import { useAuthStoreWithout } from '@/store/modules/auth'
+import { useChatStore } from '@/store/modules/chat'
 
 /** 登录后的回跳目标：只接受站内路径，防开放重定向 */
 function safeRedirect(value: unknown): string {
@@ -61,6 +62,22 @@ export function setupPageGuard(router: Router) {
           return
         }
         toError()
+        return
+      }
+    }
+
+    // 5) 会话持久化：登录后从后端加载会话（服务端有数据则以服务端为准）。
+    //    放在守卫里而不是组件里 —— 水合会整体替换会话列表，必须在 Chat 视图
+    //    读取 route.params.uuid 之前完成，否则会先渲染出错误的空会话
+    const chatStore = useChatStore()
+    const routeUuid = to.name === 'Chat' ? Number(to.params.uuid) : undefined
+    await chatStore.hydrateFromServer(Number.isInteger(routeUuid) ? routeUuid : undefined)
+
+    // 水合后原路由指向的会话可能已不存在（如本地新建但服务端没有），回退到最近一条
+    if (to.name === 'Chat' && chatStore.history.length > 0) {
+      const requested = Number(to.params.uuid)
+      if (!chatStore.history.some(item => item.uuid === requested)) {
+        next({ name: 'Chat', params: { uuid: chatStore.history[0].uuid } })
         return
       }
     }

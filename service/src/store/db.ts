@@ -17,6 +17,28 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT    NOT NULL DEFAULT 'user',
   created_at    INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid       INTEGER NOT NULL,
+  user_id    INTEGER NOT NULL,
+  title      TEXT    NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(user_id, uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id  INTEGER NOT NULL,
+  role             TEXT    NOT NULL,
+  content          TEXT    NOT NULL DEFAULT '',
+  agent_steps_json TEXT,
+  meta_json        TEXT,
+  created_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 `
 
 /**

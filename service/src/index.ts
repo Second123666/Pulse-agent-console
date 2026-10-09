@@ -6,6 +6,7 @@ import { chatConfig, chatReplyProcess, currentModel } from './chatgpt'
 import { limiter } from './middleware/limiter'
 import { requireAuth } from './middleware/auth'
 import { authRouter } from './auth/routes'
+import { conversationRouter } from './conversation/routes'
 import { getJwtSecret } from './auth/secret'
 import { getDb } from './store/db'
 import { authConfig } from './utils/config'
@@ -19,7 +20,9 @@ const app = express()
 const router = express.Router()
 
 app.use(express.static('public'))
-app.use(express.json())
+// 会话全量保存携带完整聊天记录（含 agentSteps），远超 express.json 默认的 100kb；
+// 规模上限在 conversation/routes.ts 里按条数校验，这里只放宽字节限制
+app.use(express.json({ limit: '10mb' }))
 
 app.all('*', (_, res, next) => {
   res.header('Access-Control-Allow-Origin', '*')
@@ -150,6 +153,8 @@ router.post('/verify', async (req, res) => {
 
 app.use('', authRouter)
 app.use('/api', authRouter)
+app.use('', conversationRouter)
+app.use('/api', conversationRouter)
 app.use('', router)
 app.use('/api', router)
 app.set('trust proxy', 1)
