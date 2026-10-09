@@ -8,6 +8,8 @@ export interface AgentConfig {
   openaiApiModel: string
   agentMaxSteps: number
   agentTokenBudget: number
+  /** 单个工具结果回填模型上下文前的字符上限（超出即截断，见 agent/loop.ts） */
+  agentToolResultMaxChars: number
   embeddingModel: string
 }
 
@@ -36,6 +38,7 @@ export const agentConfig: AgentConfig = {
   openaiApiModel: envString('OPENAI_API_MODEL'),
   agentMaxSteps: envNumber('AGENT_MAX_STEPS', 10),
   agentTokenBudget: envNumber('AGENT_TOKEN_BUDGET', 30000),
+  agentToolResultMaxChars: envNumber('AGENT_TOOL_RESULT_MAX_CHARS', 8000),
   embeddingModel: envString('EMBEDDING_MODEL'),
 }
 

@@ -86,6 +86,54 @@ describe('runAgent', () => {
     expect(secondRequestMessages.some((m: { role: string }) => m.role === 'tool')).toBe(true)
   })
 
+  it('超大工具结果被截断，且 SSE 事件与回填上下文用的是同一份截断文本', async () => {
+    const huge = 'A'.repeat(20000)
+    const hugeTool: Tool = {
+      name: 'read_huge',
+      description: '返回超长内容',
+      parameters: {},
+      handler: () => huge,
+    }
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'read_huge' }])))
+      .mockImplementationOnce(asStream(textResult('已读完')))
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '读文件' }],
+      tools: [hugeTool],
+      onEvent: e => events.push(e),
+    })
+
+    const toolResult = events.find(e => e.type === 'tool_result')
+    const content = toolResult?.type === 'tool_result' ? toolResult.content : ''
+    expect(content.length).toBeLessThan(huge.length)
+    expect(content).toContain('[已截断：原 20000 字符]')
+    // 截断保留的是前缀
+    expect(content.startsWith('A'.repeat(100))).toBe(true)
+
+    // 回填给模型的 tool 消息与事件内容完全一致（单点截断，不存在两套阈值）
+    const secondRequestMessages = mockChatCompletionStream.mock.calls[1][0].messages
+    const toolMessage = secondRequestMessages.find((m: { role: string }) => m.role === 'tool')
+    expect(toolMessage.content).toBe(content)
+  })
+
+  it('未超阈值的工具结果原样回填，不加截断标记', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'get_time' }])))
+      .mockImplementationOnce(asStream(textResult('好')))
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '现在几点？' }],
+      tools: [timeTool],
+      onEvent: e => events.push(e),
+    })
+
+    const toolResult = events.find(e => e.type === 'tool_result')
+    expect(toolResult?.type === 'tool_result' && toolResult.content).toBe('2026-09-19 10:00:00')
+  })
+
   it('工具抛错：以错误文本回填（自愈），循环继续给出回答', async () => {
     const badTool: Tool = {
       name: 'boom',

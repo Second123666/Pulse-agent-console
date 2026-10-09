@@ -20,6 +20,19 @@ function isCjk(char: string): boolean {
   )
 }
 
+/**
+ * 工具结果截断：**单点收口**，避免各工具各截一套（阈值见 `AGENT_TOOL_RESULT_MAX_CHARS`）。
+ *
+ * 管的是「喂给模型的上下文」而非 UI 展示（前端的展示截断是另一回事、阈值更小）。
+ * 一个 100KB 的 read_file 结果足以吃光整个 token 预算，必须有上限。
+ */
+function truncateToolResult(content: string): string {
+  const limit = agentConfig.agentToolResultMaxChars
+  if (!Number.isFinite(limit) || limit <= 0 || content.length <= limit)
+    return content
+  return `${content.slice(0, limit)}\n[已截断：原 ${content.length} 字符]`
+}
+
 /** ReAct 主循环：调模型 → 有 tool_calls 则执行并回填 → 否则输出最终回答 */
 export async function runAgent(options: AgentRunOptions): Promise<void> {
   const maxSteps = Math.max(1, options.maxSteps ?? agentConfig.agentMaxSteps)
@@ -100,7 +113,9 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
         if (!tool)
           throw new Error(`Unknown tool: ${call.function.name}`)
         const args = JSON.parse(call.function.arguments || '{}')
-        content = String(await tool.handler(args))
+        // 单点截断：回填模型上下文与 SSE 事件用同一份截断结果，
+        // 保证「模型看到的」与「前端收到的」一致（前端另有更小阈值的展示截断）
+        content = truncateToolResult(String(await tool.handler(args)))
       }
       catch (error: any) {
         // 工具异常以错误文本回填，模型可基于该信息自愈
