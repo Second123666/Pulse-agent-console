@@ -33,26 +33,43 @@ app.all('*', (_, res, next) => {
 })
 
 // 需登录：否则任何人可 curl 消耗服务端 API key 与额度（requireAuth 见 middleware/auth.ts）
+// SSE：text/event-stream + data: 帧，前端用 fetch ReadableStream 逐帧解析（协议与 /agent-process 统一）
 router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
-  res.setHeader('Content-type', 'application/octet-stream')
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders?.()
+
+  // 客户端断开（用户点停止 / 关页面）时中止上游请求，避免继续消耗 token（与 /agent-process 一致）
+  const controller = new AbortController()
+  res.on('close', () => {
+    // writableEnded 为 false 说明是客户端提前断开，而非本轮正常结束
+    if (!res.writableEnded)
+      controller.abort()
+  })
+
+  const writeEvent = (chat: ChatMessage) => {
+    res.write(`data: ${JSON.stringify(chat)}\n\n`)
+  }
 
   try {
     const { prompt, options = {}, systemMessage, temperature, top_p } = req.body as RequestProps
-    let firstChunk = true
     await chatReplyProcess({
       message: prompt,
       lastContext: options,
-      process: (chat: ChatMessage) => {
-        res.write(firstChunk ? JSON.stringify(chat) : `\n${JSON.stringify(chat)}`)
-        firstChunk = false
-      },
+      signal: controller.signal,
+      process: writeEvent,
       systemMessage,
       temperature,
       top_p,
     })
   }
-  catch (error) {
-    res.write(JSON.stringify(error))
+  catch (error: any) {
+    // 客户端主动中止属正常路径，不当作错误上报（连接已断，写了也没人收）
+    if (error?.name !== 'AbortError') {
+      const message = error?.message ?? 'Please check the back-end console'
+      res.write(`data: ${JSON.stringify({ status: 'Fail', message })}\n\n`)
+    }
   }
   finally {
     res.end()

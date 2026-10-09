@@ -14,7 +14,7 @@ import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
 import { useChatStore, usePromptStore, useSettingStore } from '@/store'
-import { fetchAgentProcess, fetchChatAPIProcess } from '@/api'
+import { fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
 
 let controller = new AbortController()
@@ -281,46 +281,43 @@ async function onConversation() {
     else {
       let lastText = ''
       const fetchChatAPIOnce = async () => {
-        await fetchChatAPIProcess<Chat.ConversationResponse>({
+        await fetchChatAPIProcessStream({
           prompt: message,
           options,
           signal: controller.signal,
-          onDownloadProgress: ({ event }) => {
-            const xhr = event.target
-            const { responseText } = xhr
-            // Always process the final line
-            const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
-            let chunk = responseText
-            if (lastIndex !== -1)
-              chunk = responseText.substring(lastIndex)
-            try {
-              const data = JSON.parse(chunk)
-              updateChat(
+          onEvent: (data) => {
+            // 后端错误帧（status: 'Fail'）直接展示，不再依赖抛错
+            if (data.status === 'Fail') {
+              updateChatSome(
                 +uuid,
                 dataSources.value.length - 1,
-                {
-                  dateTime: new Date().toLocaleString(),
-                  text: lastText + (data.text ?? ''),
-                  inversion: false,
-                  error: false,
-                  loading: true,
-                  conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
-                  requestOptions: { prompt: message, options: { ...options } },
-                },
+                { text: data.message ?? 'Error', error: true, loading: false },
               )
-
-              if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
-                options.parentMessageId = data.id
-                lastText = data.text
-                message = ''
-                return fetchChatAPIOnce()
-              }
-
-              scrollToBottomIfAtBottom()
+              return
             }
-            catch (error) {
-            //
+
+            updateChat(
+              +uuid,
+              dataSources.value.length - 1,
+              {
+                dateTime: new Date().toLocaleString(),
+                text: lastText + (data.text ?? ''),
+                inversion: false,
+                error: false,
+                loading: true,
+                conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+                requestOptions: { prompt: message, options: { ...options } },
+              },
+            )
+
+            if (openLongReply && data.detail?.choices[0]?.finish_reason === 'length') {
+              options.parentMessageId = data.id
+              lastText = data.text
+              message = ''
+              return fetchChatAPIOnce()
             }
+
+            scrollToBottomIfAtBottom()
           },
         })
         updateChatSome(+uuid, dataSources.value.length - 1, { loading: false })
@@ -425,43 +422,40 @@ async function onRegenerate(index: number) {
     else {
       let lastText = ''
       const fetchChatAPIOnce = async () => {
-        await fetchChatAPIProcess<Chat.ConversationResponse>({
+        await fetchChatAPIProcessStream({
           prompt: message,
           options,
           signal: controller.signal,
-          onDownloadProgress: ({ event }) => {
-            const xhr = event.target
-            const { responseText } = xhr
-            // Always process the final line
-            const lastIndex = responseText.lastIndexOf('\n', responseText.length - 2)
-            let chunk = responseText
-            if (lastIndex !== -1)
-              chunk = responseText.substring(lastIndex)
-            try {
-              const data = JSON.parse(chunk)
-              updateChat(
+          onEvent: (data) => {
+            // 后端错误帧（status: 'Fail'）直接展示，不再依赖抛错
+            if (data.status === 'Fail') {
+              updateChatSome(
                 +uuid,
                 index,
-                {
-                  dateTime: new Date().toLocaleString(),
-                  text: lastText + (data.text ?? ''),
-                  inversion: false,
-                  error: false,
-                  loading: true,
-                  conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
-                  requestOptions: { prompt: message, options: { ...options } },
-                },
+                { text: data.message ?? 'Error', error: true, loading: false },
               )
-
-              if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
-                options.parentMessageId = data.id
-                lastText = data.text
-                message = ''
-                return fetchChatAPIOnce()
-              }
+              return
             }
-            catch (error) {
-              //
+
+            updateChat(
+              +uuid,
+              index,
+              {
+                dateTime: new Date().toLocaleString(),
+                text: lastText + (data.text ?? ''),
+                inversion: false,
+                error: false,
+                loading: true,
+                conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+                requestOptions: { prompt: message, options: { ...options } },
+              },
+            )
+
+            if (openLongReply && data.detail?.choices[0]?.finish_reason === 'length') {
+              options.parentMessageId = data.id
+              lastText = data.text
+              message = ''
+              return fetchChatAPIOnce()
             }
           },
         })

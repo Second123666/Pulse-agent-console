@@ -52,6 +52,94 @@ export function fetchChatAPIProcess<T = any>(
   })
 }
 
+/** /chat-process SSE 帧（后端逐块推送的完整累计文本） */
+export interface ChatProcessEvent {
+  id: string
+  text: string
+  conversationId?: string
+  detail?: { choices: Array<{ finish_reason?: string | null }> }
+  status?: 'Success' | 'Fail'
+  message?: string
+}
+
+/**
+ * 调用 /chat-process（SSE），逐帧解析并以回调方式暴露。
+ * 替代 axios onDownloadProgress 的「累积全量文本 + 切最后一行」方案：
+ * 增量块只含新帧、每帧只解析一次（O(n)），且协议与 /agent-process 统一。
+ */
+export function fetchChatAPIProcessStream(params: {
+  prompt: string
+  options?: { conversationId?: string; parentMessageId?: string }
+  signal?: AbortSignal
+  onEvent: (event: ChatProcessEvent) => void
+}): Promise<void> {
+  const settingStore = useSettingStore()
+  const authStore = useAuthStore()
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  params.signal?.addEventListener('abort', onAbort)
+
+  const body: Record<string, any> = { prompt: params.prompt, options: params.options }
+  if (authStore.isAPIModel) {
+    body.systemMessage = settingStore.systemMessage
+    body.temperature = settingStore.temperature
+    body.top_p = settingStore.top_p
+  }
+
+  return fetch(`${import.meta.env.VITE_GLOB_API_URL}/chat-process`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      // 走的是原生 fetch（不经过 axios），401 需在此单独处理：清 token + 回登录页
+      if (response.status === 401) {
+        authStore.handleUnauthorized()
+        throw new Error('登录状态已过期，请重新登录')
+      }
+
+      if (!response.ok || !response.body)
+        throw new Error(`对话请求失败：HTTP ${response.status}`)
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      // 逐块读取，解析 SSE 的 data: 行（解析器与 fetchAgentProcess 一致）
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done)
+          break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:'))
+            continue
+          const payload = trimmed.slice(5).trim()
+          if (!payload)
+            continue
+          // 只捕获 JSON.parse 的失败（半截帧等，解析不了属预期）
+          let event: ChatProcessEvent
+          try {
+            event = JSON.parse(payload) as ChatProcessEvent
+          }
+          catch {
+            continue
+          }
+          params.onEvent(event)
+        }
+      }
+    })
+    .finally(() => {
+      params.signal?.removeEventListener('abort', onAbort)
+    })
+}
+
 export function fetchSession<T>() {
   return post<T>({
     url: '/session',

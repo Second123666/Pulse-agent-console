@@ -18,4 +18,6 @@ export interface RequestOptions {
   systemMessage?: string
   temperature?: number
   top_p?: number
+  /** 外部中止信号（客户端断开时联动中止上游请求） */
+  signal?: AbortSignal
 }

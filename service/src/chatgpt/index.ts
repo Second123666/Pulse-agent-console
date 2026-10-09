@@ -82,6 +82,9 @@ async function chatReplyProcess(options: RequestOptions) {
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    // 外部信号（客户端断开）联动中止上游请求；读取结束后统一清理监听
+    const onExternalAbort = () => controller.abort()
+    options.signal?.addEventListener('abort', onExternalAbort)
 
     const response = await fetch(`${apiBaseUrl}/chat/completions`, {
       method: 'POST',
@@ -101,6 +104,7 @@ async function chatReplyProcess(options: RequestOptions) {
 
     if (!response.ok || !response.body) {
       clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onExternalAbort)
       const status = String(response.status)
       const errorText = await response.text().catch(() => '')
       global.console.log(`[API] request failed (${status}): ${errorText}`)
@@ -158,6 +162,7 @@ async function chatReplyProcess(options: RequestOptions) {
     }
     finally {
       clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onExternalAbort)
     }
 
     messageStore.set(assistantMessage.id, assistantMessage)
