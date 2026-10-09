@@ -177,6 +177,8 @@ export interface FetchAgentProcessParams {
   systemMessage?: string
   /** 历史上下文（不含本轮 prompt），缺省为空 */
   messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+  /** 会话 uuid：后端据此挂靠长期记忆摘要 */
+  conversationId?: number
   signal?: AbortSignal
   /** 每个 SSE 事件回调一次 */
   onEvent: (event: AgentEvent) => void
@@ -185,7 +187,7 @@ export interface FetchAgentProcessParams {
 }
 
 /** 调用 /agent-process，SSE 逐帧解析并以回调方式暴露 */
-export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onEvent, onStateChange }: FetchAgentProcessParams): Promise<void> {
+export function fetchAgentProcess({ prompt, systemMessage, messages, conversationId, signal, onEvent, onStateChange }: FetchAgentProcessParams): Promise<void> {
   const authStore = useAuthStore()
   const controller = new AbortController()
   const onAbort = () => controller.abort()
@@ -199,7 +201,7 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, signal, onE
       'Content-Type': 'application/json',
       ...(authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {}),
     },
-    body: JSON.stringify({ prompt, systemMessage, messages: messages ?? [] }),
+    body: JSON.stringify({ prompt, systemMessage, messages: messages ?? [], conversationId }),
     signal: controller.signal,
   })
     .then(async (response) => {

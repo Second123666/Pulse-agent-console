@@ -149,6 +149,8 @@ async function runAgentConversation(promptText: string, controller: AbortControl
     prompt: promptText,
     systemMessage: settingStore.systemMessage,
     messages: history,
+    // 会话 uuid：后端据此把长期记忆摘要挂到本会话上
+    conversationId: +uuid,
     signal: controller.signal,
     onStateChange: (state) => {
       // connecting 就开始计时：连接被静默黑洞化时（服务端接了连接却永不响应）根本等不到首个事件，

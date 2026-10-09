@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+
+CREATE TABLE IF NOT EXISTS memory (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL,
+  conversation_id INTEGER NOT NULL,
+  summary         TEXT    NOT NULL,
+  embedding       BLOB,
+  message_count   INTEGER NOT NULL DEFAULT 0,
+  created_at      INTEGER NOT NULL,
+  UNIQUE(user_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_user ON memory(user_id);
 `
 
 /**

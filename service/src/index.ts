@@ -13,6 +13,7 @@ import { authConfig } from './utils/config'
 import { runAgent } from './agent/loop'
 import { list } from './agent/registry'
 import type { AgentEvent } from './agent/types'
+import { composeSystemMessage, recallMemories, rememberConversation } from './memory'
 import './tools'
 import { loadMcpTools } from './mcp'
 
@@ -64,7 +65,9 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
   res.setHeader('Connection', 'keep-alive')
   res.flushHeaders?.()
 
-  const { prompt, systemMessage, messages } = req.body as RequestProps
+  const { prompt, systemMessage, messages, conversationId } = req.body as RequestProps
+  const userId = Number(req.user?.sub)
+  const hasUser = Number.isInteger(userId) && userId > 0
   const writeEvent = (event: AgentEvent) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
@@ -85,14 +88,44 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
   try {
     // 历史上下文（缺省为空数组，此时行为与单轮对话完全一致）
     const history = Array.isArray(messages) ? messages : []
+
+    // 长期记忆召回：按本轮提问做语义检索，把相关历史摘要拼进 system message。
+    // 召回失败 / 无 embedding 时返回空数组，systemMessage 原样透传 —— 绝不影响对话本身
+    const memories = hasUser ? await recallMemories(userId, prompt) : []
+    const effectiveSystemMessage = composeSystemMessage(systemMessage, memories)
+    if (memories.length > 0)
+      globalThis.console.log(`[memory] 已注入 ${memories.length} 条历史记忆`) // 便于验证召回是否真的生效
+
+    // 捕获最终回答文本，供本轮结束后刷新长期记忆（answer 是定稿事件）
+    let answerText = ''
+
     // 传入当前已注册的全部工具；结束时 runAgent 会发出 answer 事件
     await runAgent({
       messages: [...history, { role: 'user', content: prompt }],
       tools: list(),
-      systemMessage,
+      systemMessage: effectiveSystemMessage,
       signal: controller.signal,
-      onEvent: writeEvent,
+      onEvent: (event) => {
+        if (event.type === 'answer')
+          answerText = event.content
+        writeEvent(event)
+      },
     })
+
+    // 长期记忆刷新：fire-and-forget，不拖慢响应收尾；失败在 memory 内部静默降级。
+    // 需要会话 uuid 才能挂靠记忆，前端未传（老客户端）则跳过
+    const memoryConversationId = Number(conversationId)
+    if (hasUser && Number.isInteger(memoryConversationId) && memoryConversationId > 0) {
+      void rememberConversation({
+        userId,
+        conversationId: memoryConversationId,
+        messages: [
+          ...history,
+          { role: 'user', content: prompt },
+          ...(answerText ? [{ role: 'assistant' as const, content: answerText }] : []),
+        ],
+      })
+    }
   }
   catch (error: any) {
     // 客户端主动中止属正常路径，不当作错误上报（连接已断，写了也没人收）
