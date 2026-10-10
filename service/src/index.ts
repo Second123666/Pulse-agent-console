@@ -8,13 +8,15 @@ import { limiter } from './middleware/limiter'
 import { requireAuth } from './middleware/auth'
 import { authRouter } from './auth/routes'
 import { conversationRouter } from './conversation/routes'
+import { usageRouter } from './usage/routes'
+import { recordUsage } from './usage/store'
 import { getJwtSecret } from './auth/secret'
 import { getDb } from './store/db'
 import { authConfig } from './utils/config'
 import { runAgent } from './agent/loop'
 import { awaitApproval, clearRunApprovals, resolveApproval } from './agent/approvals'
 import { list } from './agent/registry'
-import type { AgentEvent } from './agent/types'
+import type { AgentEvent, AgentUsage } from './agent/types'
 import { composeSystemMessage, recallMemories, rememberConversation } from './memory'
 import './tools'
 import { loadMcpTools } from './mcp'
@@ -129,6 +131,8 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
 
     // 捕获最终回答文本，供本轮结束后刷新长期记忆（answer 是定稿事件）
     let answerText = ''
+    // 本轮累计用量（随 answer 事件带出），收尾时落库
+    let answerUsage: AgentUsage | undefined
 
     // 传入当前已注册的全部工具；结束时 runAgent 会发出 answer 事件
     await runAgent({
@@ -142,11 +146,30 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
         ? request => awaitApproval({ runId, toolCallId: request.id, userId })
         : undefined,
       onEvent: (event) => {
-        if (event.type === 'answer')
+        if (event.type === 'answer') {
           answerText = event.content
+          answerUsage = event.usage
+        }
         writeEvent(event)
       },
     })
+
+    // 用量落库：失败只告警不抛出 —— 统计是旁路，绝不能因为它把已经跑完的一轮对话变成错误
+    if (hasUser && answerUsage) {
+      try {
+        recordUsage({
+          userId,
+          conversationUuid: Number.isInteger(Number(conversationId)) ? Number(conversationId) : null,
+          model: currentModel(),
+          promptTokens: answerUsage.promptTokens,
+          completionTokens: answerUsage.completionTokens,
+          durationMs: answerUsage.durationMs,
+        })
+      }
+      catch (error: any) {
+        globalThis.console.warn('[usage] 用量落库失败：', error?.message ?? error)
+      }
+    }
 
     // 长期记忆刷新：fire-and-forget，不拖慢响应收尾；失败在 memory 内部静默降级。
     // 需要会话 uuid 才能挂靠记忆，前端未传（老客户端）则跳过
@@ -261,6 +284,9 @@ app.use('/api', router)
 // 两者的路由前缀不重叠（/conversation/* vs 其余），换序不影响各自匹配
 app.use('', conversationRouter)
 app.use('/api', conversationRouter)
+// 用量汇总：同样全量 requireAuth，同样挂在主 router 之后（前缀 /usage/* 与其余不重叠）
+app.use('', usageRouter)
+app.use('/api', usageRouter)
 app.set('trust proxy', 1)
 
 // 鉴权自检：数据库可用性与鉴权模式在启动时明确打出，避免运行中才发现配置问题

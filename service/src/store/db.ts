@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS memory (
   UNIQUE(user_id, conversation_id)
 );
 CREATE INDEX IF NOT EXISTS idx_memory_user ON memory(user_id);
+
+CREATE TABLE IF NOT EXISTS usage (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id           INTEGER NOT NULL,
+  conversation_uuid INTEGER,
+  model             TEXT    NOT NULL DEFAULT '',
+  prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  duration_ms       INTEGER NOT NULL DEFAULT 0,
+  created_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_user ON usage(user_id, created_at);
 `
 
 /**

@@ -113,6 +113,54 @@ describe('chatCompletionStream', () => {
     expect(body.tools).toHaveLength(1)
   })
 
+  it('用量：末帧 usage 被解析（该帧 choices 为空数组，不能被「无 choice 就 return」吞掉）', async () => {
+    stubFetch([
+      deltaFrame({ content: '好' }),
+      deltaFrame({}, 'stop'),
+      // 真实上游的用量帧长这样：choices 为空数组，只有 usage
+      sseLine({ choices: [], usage: { prompt_tokens: 32, completion_tokens: 73, total_tokens: 105 } }),
+      'data: [DONE]\n\n',
+    ])
+
+    const result = await chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(result.content).toBe('好')
+    expect(result.usage).toEqual({ promptTokens: 32, completionTokens: 73, totalTokens: 105 })
+  })
+
+  it('用量：中间帧的 usage:null 不覆盖末帧的真实值', async () => {
+    stubFetch([
+      sseLine({ choices: [{ delta: { content: '好' } }], usage: null }),
+      sseLine({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }),
+    ])
+
+    const result = await chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 })
+  })
+
+  it('用量：上游完全不返回 usage 时为 undefined，且不影响正文解析', async () => {
+    stubFetch([deltaFrame({ content: '好' }), deltaFrame({}, 'stop')])
+
+    const result = await chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(result.usage).toBeUndefined()
+    expect(result.content).toBe('好')
+  })
+
+  it('用量：total_tokens 缺失时由 prompt+completion 兜底', async () => {
+    stubFetch([sseLine({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } })])
+
+    const result = await chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(result.usage).toEqual({ promptTokens: 7, completionTokens: 3, totalTokens: 10 })
+  })
+
+  it('回归：请求体不带 stream_options（上游本就返回 usage，加它只会让每帧多一个 usage:null）', async () => {
+    const fetchMock = stubFetch([deltaFrame({}, 'stop')])
+
+    await chatCompletionStream({ messages: [{ role: 'user', content: 'hi' }] })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.stream_options).toBeUndefined()
+  })
+
   it('跨块截断的帧仍能正确解析（半截 JSON 落在块边界）', async () => {
     // 同一个 data 帧被人为切成两半下发
     const whole = deltaFrame({ content: '完整内容' })

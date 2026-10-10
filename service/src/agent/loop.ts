@@ -1,7 +1,8 @@
 import { agentConfig } from '../utils/config'
 import { APPROVAL_DENIED_MESSAGE } from './approvals'
-import { type OpenAIMessage, type OpenAITool, chatCompletionStream } from './openaiClient'
-import type { AgentRunOptions } from './types'
+import type { ChatCompletionResult, OpenAIMessage, OpenAITool, OpenAIToolChoice } from './openaiClient'
+import { chatCompletionStream } from './openaiClient'
+import type { AgentRunOptions, AgentUsage, AgentUsageStep } from './types'
 
 /** 熔断提示词：要求模型立刻总结收尾（仅注入一次） */
 const BREAKER_PROMPT = '你已达到最大步数或 Token 预算上限。请立即给出最终总结回答并收尾，不要再次调用任何工具。在回答末尾注明「（因预算/步数限制提前截断）」。'
@@ -73,6 +74,41 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
   let stepCount = 0
   let circuitBroken = false
 
+  // 用量统计：逐轮累计 token 与耗时，随 answer 事件带出（见 AgentUsage）。
+  // 上游不给 usage 时 token 计 0，耗时仍照记 —— 统计缺数字好过统计整个缺失
+  const startedAt = Date.now()
+  const usageSteps: AgentUsageStep[] = []
+  let promptTokens = 0
+  let completionTokens = 0
+
+  const buildUsage = (): AgentUsage => ({
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    durationMs: Date.now() - startedAt,
+    steps: usageSteps,
+  })
+
+  /** 统一的模型调用入口：把「本轮耗时与用量」的记账收在一处，避免各调用点各记一套 */
+  const callModel = async (toolChoice: OpenAIToolChoice): Promise<ChatCompletionResult> => {
+    const turnStartedAt = Date.now()
+    const result = await chatCompletionStream(
+      { messages, tools: openAITools, tool_choice: toolChoice, signal: options.signal },
+      delta => options.onEvent({ type: 'text_delta', content: delta }),
+    )
+    const stepPrompt = result.usage?.promptTokens ?? 0
+    const stepCompletion = result.usage?.completionTokens ?? 0
+    usageSteps.push({
+      turn: usageSteps.length,
+      promptTokens: stepPrompt,
+      completionTokens: stepCompletion,
+      durationMs: Date.now() - turnStartedAt,
+    })
+    promptTokens += stepPrompt
+    completionTokens += stepCompletion
+    return result
+  }
+
   while (stepCount < maxSteps + 1) {
     // 熔断：步数用尽或 token 预算超限，注入系统消息要求模型总结收尾（仅一次）
     if (!circuitBroken && (stepCount >= maxSteps || estimateTokens() > tokenBudget)) {
@@ -81,22 +117,14 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
     }
 
     // 流式调用：文本增量实时转发给前端，定稿仍走下方的 thought / answer 事件
-    const result = await chatCompletionStream(
-      {
-        messages,
-        tools: openAITools,
-        tool_choice: 'auto',
-        signal: options.signal,
-      },
-      delta => options.onEvent({ type: 'text_delta', content: delta }),
-    )
+    const result = await callModel('auto')
 
     // 无工具调用 → 直接给出最终回答；若已熔断且模型未注明截断，兜底追加说明
     if (result.toolCalls.length === 0) {
       let content = result.content ?? ''
       if (circuitBroken && !content.includes('提前截断'))
         content = `${content}\n\n（因预算/步数限制提前截断）`
-      options.onEvent({ type: 'answer', content })
+      options.onEvent({ type: 'answer', content, usage: buildUsage() })
       return
     }
 
@@ -156,10 +184,7 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
     if (circuitBroken) {
       let content = ''
       try {
-        const final = await chatCompletionStream(
-          { messages, tools: openAITools, tool_choice: 'none', signal: options.signal },
-          delta => options.onEvent({ type: 'text_delta', content: delta }),
-        )
+        const final = await callModel('none')
         if (final.toolCalls.length === 0 && final.content)
           content = final.content
       }
@@ -168,7 +193,7 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
       }
       if (!content.includes('提前截断'))
         content = content ? `${content}\n\n（因预算/步数限制提前截断）` : '（因预算/步数限制提前截断）'
-      options.onEvent({ type: 'answer', content })
+      options.onEvent({ type: 'answer', content, usage: buildUsage() })
       return
     }
   }

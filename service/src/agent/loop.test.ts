@@ -477,3 +477,64 @@ describe('runAgent', () => {
     expect(requestApproval).not.toHaveBeenCalled()
   })
 })
+
+describe('用量统计（9.4）', () => {
+  /** 给 mock 结果挂上上游 usage */
+  function withUsage(result: ChatCompletionResult, promptTokens: number, completionTokens: number): ChatCompletionResult {
+    return { ...result, usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens } }
+  }
+
+  it('answer 事件带出累计用量与逐轮明细', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(withUsage(toolCallsResult([{ name: 'get_time' }]), 100, 20)))
+      .mockImplementationOnce(asStream(withUsage(textResult('现在 10 点'), 150, 30)))
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '几点' }],
+      tools: [timeTool],
+      onEvent: e => events.push(e),
+    })
+
+    const answer = events.at(-1)
+    expect(answer?.type).toBe('answer')
+    const usage = answer?.type === 'answer' ? answer.usage : undefined
+    expect(usage).toBeDefined()
+    // 两轮模型调用：100+150 / 20+30
+    expect(usage?.promptTokens).toBe(250)
+    expect(usage?.completionTokens).toBe(50)
+    expect(usage?.totalTokens).toBe(300)
+    expect(usage?.steps).toHaveLength(2)
+    expect(usage?.steps.map(s => s.turn)).toEqual([0, 1])
+    expect(usage?.steps[0]).toMatchObject({ promptTokens: 100, completionTokens: 20 })
+    expect(usage?.steps[1]).toMatchObject({ promptTokens: 150, completionTokens: 30 })
+    // 耗时是墙钟时间，只断言非负
+    expect(usage?.durationMs).toBeGreaterThanOrEqual(0)
+    expect(usage?.steps.every(s => s.durationMs >= 0)).toBe(true)
+  })
+
+  it('上游不给 usage 时 token 计 0，但仍带出 steps 与耗时（统计降级而非整个缺失）', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('你好')))
+
+    const events: AgentEvent[] = []
+    await runAgent({ messages: [{ role: 'user', content: '你好' }], onEvent: e => events.push(e) })
+
+    const answer = events.at(-1)
+    const usage = answer?.type === 'answer' ? answer.usage : undefined
+    expect(usage).toMatchObject({ promptTokens: 0, completionTokens: 0, totalTokens: 0 })
+    expect(usage?.steps).toHaveLength(1)
+    expect(usage?.steps[0]).toMatchObject({ promptTokens: 0, completionTokens: 0 })
+  })
+
+  it('纯文本一轮也带 usage（不依赖是否调用过工具）', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(withUsage(textResult('你好'), 12, 7)))
+
+    const events: AgentEvent[] = []
+    await runAgent({ messages: [{ role: 'user', content: '你好' }], onEvent: e => events.push(e) })
+
+    const answer = events.at(-1)
+    const usage = answer?.type === 'answer' ? answer.usage : undefined
+    expect(usage?.totalTokens).toBe(19)
+    expect(usage?.steps).toHaveLength(1)
+  })
+})

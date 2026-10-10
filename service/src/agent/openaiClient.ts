@@ -40,10 +40,38 @@ export interface ChatCompletionOptions {
   signal?: AbortSignal
 }
 
+/** 上游返回的 token 用量（OpenAI 兼容格式的驼峰化） */
+export interface TokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 export interface ChatCompletionResult {
   content: string | null
   toolCalls: OpenAIToolCall[]
   finishReason: string | null
+  /** 上游未返回 usage 时缺省（调用方需容忍缺省，不得假定一定存在） */
+  usage?: TokenUsage
+}
+
+/**
+ * 解析上游 usage 字段；字段缺失或非数字时返回 undefined。
+ *
+ * 之所以不抛错：usage 只是统计信息，拿不到时应静默降级为「无用量」，
+ * 绝不能因为上游少给一个字段就把整轮对话打断。
+ */
+function parseUsage(raw: any): TokenUsage | undefined {
+  const promptTokens = Number(raw?.prompt_tokens)
+  const completionTokens = Number(raw?.completion_tokens)
+  if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens))
+    return undefined
+  const totalTokens = Number(raw?.total_tokens)
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: Number.isFinite(totalTokens) ? totalTokens : promptTokens + completionTokens,
+  }
 }
 
 /** 统一错误包装：HTTP 状态 + body 摘要（截断至 500 字符） */
@@ -69,6 +97,12 @@ function summarizeBody(body: string): string {
 
 /** 流式响应的单个 chunk（仅声明用到的字段） */
 interface StreamChunk {
+  /** 用量通常只在末帧非空（部分实现每帧带 `usage: null`） */
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  } | null
   choices?: Array<{
     finish_reason?: string | null
     delta?: {
@@ -136,6 +170,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
       content: choice?.message?.content ?? null,
       toolCalls: choice?.message?.tool_calls ?? [],
       finishReason: choice?.finish_reason ?? null,
+      usage: parseUsage(data.usage),
     }
   }
   catch (error) {
@@ -198,6 +233,7 @@ export async function chatCompletionStream(
 
     let content = ''
     let finishReason: string | null = null
+    let usage: TokenUsage | undefined
     // 按 index 累积 tool_calls 分片：id 与 name 仅出现在首片，arguments 逐段拼接
     const toolCallParts = new Map<number, { id: string; name: string; args: string }>()
 
@@ -215,6 +251,10 @@ export async function chatCompletionStream(
       catch {
         return // 上游偶发半截帧，跳过而非中断整条流
       }
+      // usage 必须在取 choices 之前读：末帧的 choices 通常是空数组，
+      // 先按「无 choice 就 return」处理会把这唯一的用量帧丢掉
+      if (chunk.usage)
+        usage = parseUsage(chunk.usage) ?? usage
       const choice = chunk.choices?.[0]
       if (!choice)
         return
@@ -271,6 +311,7 @@ export async function chatCompletionStream(
       content: content || null,
       toolCalls,
       finishReason,
+      usage,
     }
   }
   catch (error) {

@@ -19,6 +19,8 @@ interface Props {
   agentSteps?: Chat.AgentStep[]
   /** Agent 连接静默超时：显示「连接可能已中断」+ 手动重试 */
   agentStalled?: boolean
+  /** 本轮的 token 用量与耗时（仅 Agent 模式） */
+  usage?: Chat.AgentUsage
 }
 
 interface Emit {
@@ -105,6 +107,20 @@ function handleRegenerate() {
   emit('regenerate')
 }
 
+/** token 数简写：1234 → 1.2k（不足 1000 原样） */
+function formatTokens(value: number): string {
+  if (!Number.isFinite(value) || value < 0)
+    return '0'
+  return value < 1000 ? String(Math.round(value)) : `${(value / 1000).toFixed(1)}k`
+}
+
+/** 耗时简写：4300 → 4.3s（不足 1 秒显示毫秒） */
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0)
+    return '0s'
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
 async function handleCopy() {
   try {
     await copyToClip(props.text || '')
@@ -138,6 +154,13 @@ async function handleCopy() {
             v-if="agentSteps?.length && !inversion" :steps="agentSteps" :interactive="!!loading"
             @approve="(id, approved) => emit('approve', id, approved)"
           />
+          <!-- 用量：等宽小字，低调到不抢正文视线。历史消息（含从服务端水合回来的）同样显示 -->
+          <div
+            v-if="usage && !inversion"
+            class="mt-1 font-mono text-[11px] text-[var(--agent-text-dim)] select-none"
+          >
+            {{ formatTokens(usage.promptTokens) }} in · {{ formatTokens(usage.completionTokens) }} out · {{ formatDuration(usage.durationMs) }}
+          </div>
           <div
             v-if="agentStalled && !inversion"
             class="flex items-center gap-3 mt-2 px-3 py-2 text-xs rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700"

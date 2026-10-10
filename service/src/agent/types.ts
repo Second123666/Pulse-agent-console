@@ -1,5 +1,28 @@
 import type { OpenAIToolCall } from './openaiClient'
 
+/** 单轮模型调用的用量与耗时 */
+export interface AgentUsageStep {
+  /** 第几轮模型调用（0 起）：正常一轮问答 = 步数 + 1 次调用 */
+  turn: number
+  promptTokens: number
+  completionTokens: number
+  durationMs: number
+}
+
+/**
+ * 一次 Agent 运行的累计用量，随 `answer` 事件带出（**纯增量字段**，老前端忽略即可）。
+ * 上游未返回 usage 时，token 计数为 0，durationMs 仍真实有效。
+ */
+export interface AgentUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** 整轮运行的墙钟耗时（含工具执行与审批等待） */
+  durationMs: number
+  /** 逐轮明细，供「各步耗时」展示与落库 */
+  steps: AgentUsageStep[]
+}
+
 /** Agent 运行过程中通过 onEvent 逐条推送的流式事件（判别联合） */
 export type AgentEvent =
   | { type: 'thought'; content: string }
@@ -9,7 +32,7 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; name: string; content: string }
   /** 需审批的工具已挂起等待用户决策（纯增量事件，不影响既有事件语义） */
   | { type: 'tool_approval_request'; id: string; name: string; arguments: string; reason: string }
-  | { type: 'answer'; content: string }
+  | { type: 'answer'; content: string; usage?: AgentUsage }
   | { type: 'error'; message: string }
 
 /** 工具定义：元信息 + 执行函数 */

@@ -40,6 +40,8 @@ function toServerMessage(item: Chat.Chat): ServerMessage {
       quote: item.quote ?? null,
       conversationOptions: item.conversationOptions ?? null,
       requestOptions: item.requestOptions,
+      // 用量随消息落库：不存的话刷新后那行小字就消失了
+      ...(item.usage ? { usage: item.usage } : {}),
     },
     // dateTime 是本地化字符串，Date.parse 不可靠，解析不出就退化为当前时间；
     // 消息顺序由数组下标保证，时间戳仅用于展示与排序
@@ -57,6 +59,7 @@ function toLocalMessage(message: ServerMessage): Chat.Chat {
     ...(meta.error ? { error: true } : {}),
     ...((typeof meta.quote === 'string' && meta.quote) ? { quote: meta.quote } : {}),
     ...((Array.isArray(message.agentSteps) && message.agentSteps.length) ? { agentSteps: message.agentSteps } : {}),
+    ...(meta.usage ? { usage: meta.usage as Chat.AgentUsage } : {}),
     conversationOptions: meta.conversationOptions ?? null,
     requestOptions: meta.requestOptions ?? { prompt: message.content, options: null },
   }

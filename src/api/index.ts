@@ -214,6 +214,23 @@ export function fetchConversationDelete<T = { deleted: boolean }>(uuid: number) 
   })
 }
 
+/** 单轮模型调用的用量与耗时 */
+export interface AgentUsageStep {
+  turn: number
+  promptTokens: number
+  completionTokens: number
+  durationMs: number
+}
+
+/** 一次 Agent 运行的累计用量（仅 answer 事件带出） */
+export interface AgentUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  durationMs: number
+  steps: AgentUsageStep[]
+}
+
 /** Agent 模式 SSE 事件（与后端 /agent-process 推送格式对应） */
 export interface AgentEvent {
   type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'tool_approval_request' | 'answer' | 'error'
@@ -224,6 +241,8 @@ export interface AgentEvent {
   message?: string
   /** 仅 tool_approval_request：展示给用户的审批理由 */
   reason?: string
+  /** 仅 answer：本轮累计用量（老后端不返回时缺省） */
+  usage?: AgentUsage
 }
 
 /** Agent 连接状态：connecting（请求已发出）→ live（已收到首个事件）→ closed（流结束或出错）；
@@ -335,5 +354,38 @@ export function fetchAgentApprove<T = { approved: boolean }>(runId: string, tool
   return post<T>({
     url: '/agent-approve',
     data: { runId, toolCallId, approved },
+  })
+}
+
+/** 用量汇总里的总量 */
+export interface UsageTotals {
+  runs: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  durationMs: number
+}
+
+export interface UsageDailyRow extends UsageTotals {
+  /** 本地日期 YYYY-MM-DD */
+  date: string
+}
+
+export interface UsageConversationRow extends UsageTotals {
+  conversationUuid: number | null
+}
+
+export interface UsageSummary {
+  days: number
+  total: UsageTotals
+  daily: UsageDailyRow[]
+  conversations: UsageConversationRow[]
+}
+
+/** 用量汇总（按天 + 按会话）。days 缺省 30，后端上限 365 */
+export function fetchUsageSummary<T = UsageSummary>(days = 30) {
+  return get<T>({
+    url: '/usage/summary',
+    data: { days },
   })
 }

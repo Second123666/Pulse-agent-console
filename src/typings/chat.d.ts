@@ -12,6 +12,23 @@ declare namespace Chat {
 		approved?: boolean
 	}
 
+	/** 单轮模型调用的用量与耗时 */
+	interface AgentUsageStep {
+		turn: number
+		promptTokens: number
+		completionTokens: number
+		durationMs: number
+	}
+
+	/** 一次 Agent 运行的累计用量（随 answer 事件带出，落盘于消息 meta 以便刷新后仍可见） */
+	interface AgentUsage {
+		promptTokens: number
+		completionTokens: number
+		totalTokens: number
+		durationMs: number
+		steps: AgentUsageStep[]
+	}
+
 	interface Chat {
 		dateTime: string
 		text: string
@@ -23,6 +40,8 @@ declare namespace Chat {
 		agentSteps?: AgentStep[]
 		/** Agent 连接静默超时标记（超过 N 秒无事件），用于提示「连接可能已中断」+ 手动重试 */
 		agentStalled?: boolean
+		/** 本轮的 token 用量与耗时（仅 Agent 模式，随 answer 事件带回） */
+		usage?: AgentUsage
 		conversationOptions?: ConversationRequest | null
 		requestOptions: { prompt: string; options?: ConversationRequest | null }
 	}

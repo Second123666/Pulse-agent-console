@@ -281,6 +281,8 @@ async function runAgentConversation(promptText: string, controller: AbortControl
             loading: true,
             agentStalled: false,
             agentSteps: [...agentSteps],
+            // 老后端不返回 usage 时缺省，消息上就不带这一行
+            ...(event.usage ? { usage: event.usage as Chat.AgentUsage } : {}),
             conversationOptions: null,
             requestOptions: { prompt: promptText, options: { ...options } },
           },
@@ -841,6 +843,7 @@ onUnmounted(() => {
                   :inversion="item.inversion" :error="item.error" :loading="item.loading" :quote="item.quote"
                   :agent-steps="item.agentSteps"
                   :agent-stalled="item.agentStalled"
+                  :usage="item.usage"
                   @regenerate="onRegenerate(index)" @delete="handleDelete(index)" @reply="handleReply"
                   @speak="speakText" @approve="handleApprove"
                 />
