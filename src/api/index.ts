@@ -243,11 +243,32 @@ export interface AgentEvent {
   reason?: string
   /** 仅 answer：本轮累计用量（老后端不返回时缺省） */
   usage?: AgentUsage
+  /** 本次运行内单调递增的事件序号（老后端不返回时缺省）；断线重连凭它报「收到哪了」 */
+  seq?: number
+}
+
+/**
+ * 续传请求被拒（缓冲过期 / 运行已结束 / 服务重启过）。
+ *
+ * 单独一种错误类型，是为了让调用方能把它和「真的出错了」区分开：
+ * 前者应退回整轮重发，后者该照常报错。
+ */
+export class AgentResumeUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AgentResumeUnavailableError'
+  }
 }
 
 /** Agent 连接状态：connecting（请求已发出）→ live（已收到首个事件）→ closed（流结束或出错）；
  *  stalled 由上层按「静默超时」判定，用于提示用户连接可能已中断 */
 export type AgentConnectionState = 'connecting' | 'live' | 'stalled' | 'closed'
+
+/** 断点续传的续传位置：上次运行的 runId + 已收到的最大 seq */
+export interface AgentResumeCursor {
+  runId: string
+  lastSeq: number
+}
 
 export interface FetchAgentProcessParams {
   prompt: string
@@ -257,6 +278,11 @@ export interface FetchAgentProcessParams {
   /** 会话 uuid：后端据此挂靠长期记忆摘要 */
   conversationId?: number
   signal?: AbortSignal
+  /**
+   * 断点续传（8.2）：带上它则不发新运行，而是请服务端补发 `lastSeq` 之后的事件。
+   * 服务端拒绝时抛 AgentResumeUnavailableError，由上层决定是否整轮重发
+   */
+  resume?: AgentResumeCursor
   /** 每个 SSE 事件回调一次 */
   onEvent: (event: AgentEvent) => void
   /** 连接状态变化回调（用于上层做静默超时提示与手动重试） */
@@ -266,7 +292,7 @@ export interface FetchAgentProcessParams {
 }
 
 /** 调用 /agent-process，SSE 逐帧解析并以回调方式暴露 */
-export function fetchAgentProcess({ prompt, systemMessage, messages, conversationId, signal, onEvent, onStateChange, onRunId }: FetchAgentProcessParams): Promise<void> {
+export function fetchAgentProcess({ prompt, systemMessage, messages, conversationId, signal, resume, onEvent, onStateChange, onRunId }: FetchAgentProcessParams): Promise<void> {
   const authStore = useAuthStore()
   const controller = new AbortController()
   const onAbort = () => controller.abort()
@@ -279,6 +305,8 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, conversatio
     headers: {
       'Content-Type': 'application/json',
       ...(authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {}),
+      // 续传标记：seq 只在单次运行内唯一，所以 runId 必须随行 —— 只凭 Last-Event-ID 定位不到是哪一次运行
+      ...(resume ? { 'Last-Event-ID': String(resume.lastSeq), 'X-Agent-Run-Id': resume.runId } : {}),
     },
     body: JSON.stringify({ prompt, systemMessage, messages: messages ?? [], conversationId }),
     signal: controller.signal,
@@ -289,6 +317,11 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, conversatio
         authStore.handleUnauthorized()
         throw new Error('登录状态已过期，请重新登录')
       }
+
+      // 409 = 服务端明确拒绝续传（缓冲过期 / 运行已结束 / 服务重启过）。
+      // 单独抛类型化错误：上层据此退回「整轮重发」，而不是把它当成普通失败展示给用户
+      if (resume && response.status === 409)
+        throw new AgentResumeUnavailableError('续传不可用')
 
       if (!response.ok || !response.body)
         throw new Error(`Agent 请求失败：HTTP ${response.status}`)

@@ -14,7 +14,8 @@ import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
 import { useChatStore, usePromptStore, useSettingStore } from '@/store'
-import { fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
+import type { AgentResumeCursor } from '@/api'
+import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
 
 let controller = new AbortController()
@@ -26,6 +27,23 @@ let activeRunId = ''
 // 共享同一个数组对象才能保证互不覆盖 —— 各存一份的话，后写的那次会把对方的决策状态抹掉
 let activeSteps: Chat.AgentStep[] = []
 let activeStepsIndex = -1
+
+/**
+ * 断点续传游标（8.2）：断线后凭它请服务端补发缺口。
+ *
+ * 与 activeRunId 分开存，因为两者生命周期**正好相反**：activeRunId 在连接关闭时就清掉
+ * （审批决策再无接收方），而游标恰恰必须活过断线那一刻 —— 它存在的唯一理由就是断线后还能续。
+ *
+ * `text` 一并带着：流式渲染有节流（AGENT_STREAM_THROTTLE_MS），节流窗口内「已收到但还没落盘」
+ * 的增量只存在于内存的 streamBuffer 里。断线时若不在这里留一份，续传接上后会凭空缺一段正文。
+ *
+ * `index` 是这条运行写在哪条助手消息上：停滞横幅是**逐条消息**的，只认游标不认下标的话，
+ * 用户在新消息上跑完一轮后，再去点旧消息上那条横幅，就会把旧消息的坑续到新运行上。
+ */
+let resumeCursor: ResumeCursor | null = null
+
+/** 续传游标在 API 需要的字段之外，额外带上本地恢复用的正文与消息下标 */
+type ResumeCursor = AgentResumeCursor & { text: string; index: number }
 
 const openLongReply = import.meta.env.VITE_GLOB_OPEN_LONG_REPLY === 'true'
 
@@ -141,25 +159,46 @@ async function handleApprove(toolCallId: string, approved: boolean) {
 }
 
 /** Agent 对话核心：向 userMsgIndex + 1 处的助手占位消息流式写入，onConversation 与 onRegenerate 共用。
- * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。 */
-async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}) {
+ * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。
+ * 传 resume 则走**续传**：不重跑循环，只请服务端补发断线期间漏掉的事件，已有内容原地保留。 */
+async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}, resume?: ResumeCursor) {
   const targetIndex = userMsgIndex + 1
-  const agentSteps: Chat.AgentStep[] = []
+  // 续传：步骤流从消息上恢复，绝不从零开始 —— 用户已经看到的工具调用过程必须原样留着
+  const agentSteps: Chat.AgentStep[] = resume
+    ? [...(getChatByUuidAndIndex(+uuid, targetIndex)?.agentSteps ?? [])]
+    : []
   // 交给审批点击共用（见 activeSteps 的说明）
   activeSteps = agentSteps
   activeStepsIndex = targetIndex
   // 实时增量缓冲：text_delta 累积于此并即时渲染。
-  // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖
-  let streamBuffer = ''
+  // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖。
+  // 续传时从游标恢复（含节流窗口内未落盘的那截），而不是用消息上那份可能偏旧的文本
+  let streamBuffer = resume?.text ?? ''
+  // 唯一改动 streamBuffer 的入口：顺带同步游标里的副本，避免某个分支漏同步
+  const setStreamBuffer = (value: string) => {
+    streamBuffer = value
+    if (resumeCursor)
+      resumeCursor.text = value
+  }
   let lastRenderAt = 0
-  const renderStream = () => {
+  /** force 用于绕过节流：续传恢复后要把补上的文本立刻显示出来，不能等下一个 delta */
+  const renderStream = (force = false) => {
     const now = Date.now()
-    if (now - lastRenderAt < AGENT_STREAM_THROTTLE_MS)
+    if (!force && now - lastRenderAt < AGENT_STREAM_THROTTLE_MS)
       return
     lastRenderAt = now
     updateChatSome(+uuid, targetIndex, { text: streamBuffer, loading: true })
     scrollToBottomIfAtBottom()
   }
+  if (resume)
+    renderStream(true)
+
+  // 本轮是否收到了终局事件（answer / error）。没有就说明循环是中途断的 ——
+  // 服务端随连接断开中止、或进程重启，都会走到这里。不提示的话，用户只会盯着半截回答
+  let sawTerminal = false
+  // 是否因断线而提前收场且**留下了可续传的游标**（见下方 catch）。它要区分的是
+  // 「还能续」与「服务端那份运行已经没了」这两种都算「没跑完」的情况
+  let resumableBreak = false
 
   // 历史上下文：取本轮 user 消息之前的消息，只取纯文本，剔除出错与空消息
   // usingContext 关闭时传空数组，退化为单轮对话
@@ -207,8 +246,14 @@ async function runAgentConversation(promptText: string, controller: AbortControl
     // 会话 uuid：后端据此把长期记忆摘要挂到本会话上
     conversationId: +uuid,
     signal: controller.signal,
+    // 有续传目标时服务端只补发缺口、不跑新循环（拿不到就退化成普通新运行）
+    ...(resume ? { resume } : {}),
     onRunId: (runId) => {
       activeRunId = runId
+      // 续传时响应头回的是同一个 runId：保留游标里已收到的 seq，绝不能清零 ——
+      // 清零会让服务端把整段事件重放一遍，用户看到内容凭空翻倍
+      if (!resumeCursor || resumeCursor.runId !== runId)
+        resumeCursor = { runId, lastSeq: 0, text: '', index: targetIndex }
     },
     onStateChange: (state) => {
       // connecting 就开始计时：连接被静默黑洞化时（服务端接了连接却永不响应）根本等不到首个事件，
@@ -218,7 +263,8 @@ async function runAgentConversation(promptText: string, controller: AbortControl
       }
       else if (state === 'closed') {
         clearSilenceTimer()
-        // 运行已结束：审批决策再无接收方，清掉避免后续点击拿着过期 runId 去请求
+        // 运行已结束：审批决策再无接收方，清掉避免后续点击拿着过期 runId 去请求。
+        // 注意别顺手把 resumeCursor 也清了 —— 它要活过这次关闭，供用户点「继续」时用
         activeRunId = ''
       }
     },
@@ -227,8 +273,12 @@ async function runAgentConversation(promptText: string, controller: AbortControl
       if (getChatByUuidAndIndex(+uuid, targetIndex)?.agentStalled)
         updateChatSome(+uuid, targetIndex, { loading: true, agentStalled: false })
       resetSilenceTimer()
+      // 推进续传游标：断线后凭它报「我收到哪了」。老后端不带 seq 时游标原地不动，
+      // 后续续传会因位置对不上被服务端拒绝，自然退回整轮重发
+      if (resumeCursor && typeof event.seq === 'number')
+        resumeCursor.lastSeq = event.seq
       if (event.type === 'text_delta') {
-        streamBuffer += event.content ?? ''
+        setStreamBuffer(streamBuffer + (event.content ?? ''))
         renderStream()
       }
       else if (event.type === 'thought') {
@@ -236,7 +286,7 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         const thoughtText = streamBuffer || event.content || ''
         if (thoughtText.trim() !== '')
           agentSteps.push({ type: 'thought', content: thoughtText })
-        streamBuffer = ''
+        setStreamBuffer('')
         updateChatSome(+uuid, targetIndex, { text: '', agentSteps: [...agentSteps] })
       }
       else if (event.type === 'tool_call') {
@@ -268,7 +318,10 @@ async function runAgentConversation(promptText: string, controller: AbortControl
       }
       else if (event.type === 'answer') {
         // 定稿：用完整文本覆盖流式缓冲
-        streamBuffer = ''
+        setStreamBuffer('')
+        // 本轮已跑完，没有可续的东西了：游标留着只会让下一次「继续」拿到一份过期的位置
+        resumeCursor = null
+        sawTerminal = true
         clearSilenceTimer()
         updateChat(
           +uuid,
@@ -290,7 +343,10 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         scrollToBottomIfAtBottom()
       }
       else if (event.type === 'error') {
-        streamBuffer = ''
+        setStreamBuffer('')
+        // 运行以错误收尾，循环已退出：续传只会把同一份错误再放一遍
+        resumeCursor = null
+        sawTerminal = true
         updateChatSome(
           +uuid,
           targetIndex,
@@ -298,9 +354,28 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         )
       }
     },
+  }).catch((error: any) => {
+    // 断线但有续传游标：不当成错误收场，改为「可继续」的停滞态 —— 已生成的部分保留在屏幕上，
+    // 用户点「继续」就能补齐缺口。这是 8.2 要修的主场景：网络抖一下不该丢掉半篇回答
+    if (resumeCursor && error?.name !== 'AbortError' && error?.name !== 'AgentResumeUnavailableError') {
+      renderStream(true)
+      resumableBreak = true
+      updateChatSome(+uuid, targetIndex, { loading: false, agentStalled: true })
+      return
+    }
+    // 无游标（首个事件都没收到）/ 用户主动停止 / 续传被拒：交回上层按原有错误路径处理
+    throw error
   })
   clearSilenceTimer()
   updateChatSome(+uuid, targetIndex, { loading: false })
+
+  // 流正常读完却没等到终局事件：循环是中途断的（服务端已中止 / 进程重启）。
+  // 同样给「可继续」的提示 —— 只是这次服务端那份运行已经没了，游标续不出新东西，
+  // 清掉后点「继续」会走整轮重发（handleAgentRetry 找不到游标时的既有回退）
+  if (!sawTerminal && !resumableBreak) {
+    resumeCursor = null
+    updateChatSome(+uuid, targetIndex, { agentStalled: true })
+  }
 }
 
 async function onConversation() {
@@ -312,6 +387,8 @@ async function onConversation() {
   if (!message || message.trim() === '')
     return
 
+  // 新一轮对话与上一轮的续传位置无关（它写的是另一条消息），别让它被误当成续传目标
+  resumeCursor = null
   controller = new AbortController()
 
   addChat(
@@ -458,6 +535,8 @@ async function onRegenerate(index: number) {
   if (loading.value)
     return
 
+  // 整轮重发会把消息清空重来，旧的续传位置随之作废：留着只会在下次失败时误判为「可续传」
+  resumeCursor = null
   controller = new AbortController()
 
   const { requestOptions } = dataSources.value[index]
@@ -576,6 +655,62 @@ async function onRegenerate(index: number) {
   }
 }
 
+/**
+ * 停滞消息的「继续」（8.2）：优先续传补齐缺口，续传不可用才整轮重发。
+ *
+ * 与 onRegenerate 的关键区别：续传路径**不清空已有内容** —— 用户已经看到的部分回答与工具
+ * 调用过程原样留着，补上的只是断线期间漏掉的事件。整轮重发会推倒重来，那是最后的退路。
+ */
+async function handleAgentRetry(index: number) {
+  if (loading.value)
+    return
+
+  const cursor = resumeCursor
+  // 没有游标（运行还没开跑就断了 / 已正常跑完），或游标属于另一条消息：
+  // 无从续传，直接走原有的整轮重发
+  if (!cursor || cursor.index !== index) {
+    onRegenerate(index)
+    return
+  }
+
+  controller = new AbortController()
+  loading.value = true
+
+  const { requestOptions } = dataSources.value[index]
+  const message = requestOptions?.prompt ?? ''
+  const options: Chat.ConversationRequest = requestOptions?.options ? { ...requestOptions.options } : {}
+
+  let resumeUnavailable = false
+  try {
+    await runAgentConversation(message, controller, index - 1, options, cursor)
+    updateChatSome(+uuid, index, { loading: false })
+  }
+  catch (error: any) {
+    if (error instanceof AgentResumeUnavailableError) {
+      resumeUnavailable = true
+    }
+    else if (error?.message === 'canceled' || error?.name === 'AbortError') {
+      updateChatSome(+uuid, index, { loading: false })
+    }
+    else {
+      // 续传路径上的其它失败：退回停滞态让用户再点一次，而不是把已生成的内容换成一条错误
+      ms.error(error?.message ?? t('common.wrong'))
+      updateChatSome(+uuid, index, { loading: false, agentStalled: true })
+    }
+  }
+  finally {
+    loading.value = false
+  }
+
+  // 放在 finally 之后：这里的 loading 复位若与 onRegenerate 置上的 loading 撞在一起，
+  // 会让新一轮运行期间输入框提前解禁、停止按钮消失
+  if (resumeUnavailable) {
+    resumeCursor = null
+    ms.warning('续传窗口已过期，已改为重新生成')
+    onRegenerate(index)
+  }
+}
+
 function handleExport() {
   if (loading.value)
     return
@@ -663,6 +798,8 @@ function handleStop() {
   if (loading.value) {
     controller.abort()
     loading.value = false
+    // 用户主动停止：服务端会随连接断开中止这次运行，续传也补不出新东西，游标直接作废
+    resumeCursor = null
   }
 }
 
@@ -844,8 +981,8 @@ onUnmounted(() => {
                   :agent-steps="item.agentSteps"
                   :agent-stalled="item.agentStalled"
                   :usage="item.usage"
-                  @regenerate="onRegenerate(index)" @delete="handleDelete(index)" @reply="handleReply"
-                  @speak="speakText" @approve="handleApprove"
+                  @regenerate="onRegenerate(index)" @retry="handleAgentRetry(index)" @delete="handleDelete(index)"
+                  @reply="handleReply" @speak="speakText" @approve="handleApprove"
                 />
                 <div class="sticky bottom-0 left-0 flex justify-center">
                   <NButton v-if="loading" type="warning" @click="handleStop">

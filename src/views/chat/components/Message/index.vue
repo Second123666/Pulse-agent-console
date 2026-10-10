@@ -25,6 +25,8 @@ interface Props {
 
 interface Emit {
   (ev: 'regenerate'): void
+  /** 停滞横幅上的「重试」：优先续传补齐缺口，续不上才整轮重发（与 regenerate 区分开） */
+  (ev: 'retry'): void
   (ev: 'delete'): void
   (ev: 'reply', text: string): void
   (ev: 'speak', text: string): void
@@ -107,6 +109,12 @@ function handleRegenerate() {
   emit('regenerate')
 }
 
+/** 停滞横幅的重试：语义比「重新生成」弱 —— 已有内容会被保留，只补断线期间漏掉的部分 */
+function handleRetry() {
+  messageRef.value?.scrollIntoView()
+  emit('retry')
+}
+
 /** token 数简写：1234 → 1.2k（不足 1000 原样） */
 function formatTokens(value: number): string {
   if (!Number.isFinite(value) || value < 0)
@@ -133,7 +141,10 @@ async function handleCopy() {
 </script>
 
 <template>
-  <div ref="messageRef" class="flex w-full mb-6 overflow-hidden" :class="[{ 'flex-row-reverse': inversion }]">
+  <div
+    ref="messageRef" class="flex w-full mb-6 overflow-hidden rounded-lg"
+    :class="[{ 'flex-row-reverse': inversion }]"
+  >
     <div
       class="flex items-center justify-center flex-shrink-0 h-8 overflow-hidden rounded-full basis-8"
       :class="[inversion ? 'ml-2' : 'mr-2']"
@@ -165,12 +176,12 @@ async function handleCopy() {
             v-if="agentStalled && !inversion"
             class="flex items-center gap-3 mt-2 px-3 py-2 text-xs rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700"
           >
-            <span>连接可能已中断（长时间未收到响应）</span>
+            <span>本轮未能完成（连接中断，或服务端已停止运行）</span>
             <button
               class="px-2 py-0.5 rounded border border-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition"
-              @click="handleRegenerate"
+              @click="handleRetry"
             >
-              重试
+              继续
             </button>
           </div>
         </div>
