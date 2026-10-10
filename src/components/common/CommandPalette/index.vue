@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NModal } from 'naive-ui'
 import { useRouter } from 'vue-router'
+import { commandPaletteVisible } from './state'
 import type { MessageSearchHit } from '@/api'
 import { fetchConversationSearch } from '@/api'
 import { SvgIcon } from '@/components/common'
@@ -32,7 +33,8 @@ const router = useRouter()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 
-const visible = ref(false)
+// 开关状态在 state.ts（模块作用域）：侧边栏的搜索入口也要能翻它
+const visible = commandPaletteVisible
 const keyword = ref('')
 const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement>()
@@ -142,18 +144,32 @@ const filtered = computed<CommandItem[]>(() => {
   return [...matched, ...messageHits.value].slice(0, MAX_RESULTS)
 })
 
+/**
+ * 开关的收尾统一挂在这个 watch 上，而不是散在 open() / close() 里。
+ *
+ * 快捷键、侧边栏的搜索入口、遮罩点击都只翻 ref，于是三者走同一套语义 ——
+ * 否则从侧边栏打开时不会清关键字、不会聚焦输入框，遮罩关闭时也不会作废在途检索
+ * （此前正是漏的：遮罩关闭绕过了 close()）。
+ */
+watch(visible, (value) => {
+  if (value) {
+    keyword.value = ''
+    activeIndex.value = 0
+    nextTick(() => inputRef.value?.focus())
+  }
+  else {
+    // 作废在途检索：关掉面板后返回的结果不该回填进来
+    searchSeq += 1
+    messageHits.value = []
+  }
+})
+
 function open() {
   visible.value = true
-  keyword.value = ''
-  activeIndex.value = 0
-  nextTick(() => inputRef.value?.focus())
 }
 
 function close() {
   visible.value = false
-  // 作废在途检索：关掉面板后返回的结果不该回填进来
-  searchSeq += 1
-  messageHits.value = []
 }
 
 function run(item: CommandItem | undefined) {
