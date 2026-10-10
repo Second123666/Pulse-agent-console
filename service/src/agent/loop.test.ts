@@ -241,4 +241,100 @@ describe('runAgent', () => {
       expect(lastEvent.content).toContain('提前截断')
     }
   })
+
+  /** 按类型收窄事件数组，便于取 name / content 断言 */
+  function ofType<T extends AgentEvent['type']>(events: AgentEvent[], type: T) {
+    return events.filter((e): e is Extract<AgentEvent, { type: T }> => e.type === type)
+  }
+
+  /** 延迟指定毫秒后返回的工具，用于验证并发与事件顺序 */
+  function sleepTool(name: string, ms: number, output?: string): Tool {
+    return {
+      name,
+      description: '延迟后返回',
+      parameters: {},
+      handler: () => new Promise<string>(resolve => setTimeout(() => resolve(output ?? `${name} 完成`), ms)),
+    }
+  }
+
+  it('并发执行：tool_result 按原顺序发出（非完成顺序），且全部 tool_call 先于任何 tool_result', async () => {
+    // 故意让完成顺序与调用顺序相反：t3 最快、t1 最慢。
+    // 若实现改为按完成顺序推送，下面的断言会失败
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 't1' }, { name: 't2' }, { name: 't3' }])))
+      .mockImplementationOnce(asStream(textResult('三个工具都完成了')))
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '跑三个工具' }],
+      tools: [sleepTool('t1', 60), sleepTool('t2', 30), sleepTool('t3', 0)],
+      onEvent: e => events.push(e),
+    })
+
+    expect(ofType(events, 'tool_call').map(e => e.name)).toEqual(['t1', 't2', 't3'])
+    expect(ofType(events, 'tool_result').map(e => e.name)).toEqual(['t1', 't2', 't3'])
+    // 结果内容与各自工具对应，证明没有错配
+    expect(ofType(events, 'tool_result').map(e => e.content)).toEqual(['t1 完成', 't2 完成', 't3 完成'])
+
+    // 全部 tool_call 先发：最后一个 tool_call 必须早于第一个 tool_result
+    const types = events.map(e => e.type)
+    expect(types.lastIndexOf('tool_call')).toBeLessThan(types.indexOf('tool_result'))
+
+    // 回填给模型的 tool 消息顺序与 tool_call_id 一一对应
+    const toolMessages = mockChatCompletionStream.mock.calls[1][0].messages
+      .filter((m: { role: string }) => m.role === 'tool')
+    expect(toolMessages.map((m: { tool_call_id: string }) => m.tool_call_id))
+      .toEqual(['call_0', 'call_1', 'call_2'])
+  })
+
+  it('并发执行：单个工具失败不影响其他，失败项按自愈策略回填错误文本', async () => {
+    const okTool = (name: string, output: string): Tool => ({
+      name,
+      description: '总是成功',
+      parameters: {},
+      handler: () => output,
+    })
+    const badTool: Tool = {
+      name: 'boom',
+      description: '总是失败',
+      parameters: {},
+      handler: () => { throw new Error('kaboom') },
+    }
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'ok1' }, { name: 'boom' }, { name: 'ok2' }])))
+      .mockImplementationOnce(asStream(textResult('两个成功一个失败')))
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [{ role: 'user', content: '触发' }],
+      tools: [okTool('ok1', '甲'), badTool, okTool('ok2', '乙')],
+      onEvent: e => events.push(e),
+    })
+
+    const results = ofType(events, 'tool_result')
+    expect(results.map(r => r.name)).toEqual(['ok1', 'boom', 'ok2'])
+    expect(results[0].content).toBe('甲')
+    expect(results[1].content).toContain('[tool error]')
+    expect(results[1].content).toContain('kaboom')
+    expect(results[2].content).toBe('乙')
+    // 失败不阻断循环，仍以 answer 收尾
+    expect(events.at(-1)?.type).toBe('answer')
+  })
+
+  it('并发执行：3 个工具的总耗时接近最慢的一个，而非三者之和', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 's1' }, { name: 's2' }, { name: 's3' }])))
+      .mockImplementationOnce(asStream(textResult('完成')))
+
+    const startedAt = Date.now()
+    await runAgent({
+      messages: [{ role: 'user', content: '跑三个慢工具' }],
+      tools: [sleepTool('s1', 120), sleepTool('s2', 120), sleepTool('s3', 120)],
+      onEvent: () => {},
+    })
+    const elapsed = Date.now() - startedAt
+
+    // 串行下限 360ms，并发约 120ms；阈值取 250ms 使两侧都留有余量（CI 抖动）
+    expect(elapsed).toBeLessThan(250)
+  })
 })

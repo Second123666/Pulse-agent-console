@@ -105,25 +105,34 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
 
     messages.push({ role: 'assistant', content: result.content, tool_calls: result.toolCalls })
 
-    for (const call of result.toolCalls) {
+    // 本轮工具先按原顺序全部宣告（前端据此立刻渲染出全部工具卡片），随后并发执行 ——
+    // 模型一次返回多个独立调用时不再串行等待。当前工具集全部只读/幂等，可安全并发
+    for (const call of result.toolCalls)
       options.onEvent({ type: 'tool_call', id: call.id, name: call.function.name, arguments: call.function.arguments })
-      let content: string
-      try {
-        const tool = toolMap.get(call.function.name)
-        if (!tool)
-          throw new Error(`Unknown tool: ${call.function.name}`)
-        const args = JSON.parse(call.function.arguments || '{}')
-        // 单点截断：回填模型上下文与 SSE 事件用同一份截断结果，
-        // 保证「模型看到的」与「前端收到的」一致（前端另有更小阈值的展示截断）
-        content = truncateToolResult(String(await tool.handler(args)))
-      }
-      catch (error: any) {
-        // 工具异常以错误文本回填，模型可基于该信息自愈
-        content = `[tool error] ${error?.message ?? String(error)}`
-      }
+
+    // allSettled：单个工具失败不影响其他（按自愈策略回填错误文本），
+    // 且结果数组顺序与 toolCalls **严格一致**（role:'tool' 靠 tool_call_id 对应，乱序会让模型困惑）
+    const settled = await Promise.allSettled(result.toolCalls.map(async (call) => {
+      const tool = toolMap.get(call.function.name)
+      if (!tool)
+        throw new Error(`Unknown tool: ${call.function.name}`)
+      const args = JSON.parse(call.function.arguments || '{}')
+      // 单点截断：回填模型上下文与 SSE 事件用同一份截断结果，
+      // 保证「模型看到的」与「前端收到的」一致（前端另有更小阈值的展示截断）
+      return truncateToolResult(String(await tool.handler(args)))
+    }))
+
+    // 结果按**原顺序**推送，而非完成顺序：前端 agentSteps 是「按到达顺序 append 的扁平数组」
+    // （ToolCallCard.vue 直接 v-for 渲染），且会落盘回放 —— 完成顺序会让「工具」与「结果」
+    // 永久错位、历史会话无法正确回放，同时让测试与回放不可复现
+    result.toolCalls.forEach((call, index) => {
+      const outcome = settled[index]
+      const content = outcome.status === 'fulfilled'
+        ? outcome.value
+        : `[tool error] ${outcome.reason?.message ?? String(outcome.reason)}`
       options.onEvent({ type: 'tool_result', id: call.id, name: call.function.name, content })
       messages.push({ role: 'tool', tool_call_id: call.id, content })
-    }
+    })
 
     stepCount++
 
