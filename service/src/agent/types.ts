@@ -35,6 +35,19 @@ export type AgentEvent =
   | { type: 'answer'; content: string; usage?: AgentUsage }
   | { type: 'error'; message: string }
 
+/**
+ * 带上序号的 AgentEvent —— **SSE 实际发到线上的形态**。
+ *
+ * `seq` 是本次运行内从 1 开始、单调递增的整数，供断线重连时用 `Last-Event-ID`
+ * 定位重放起点（见 runBuffer.ts）。
+ *
+ * 单独定义而不是把 `seq` 塞进 AgentEvent 的每个分支：产生事件的地方（loop.ts）
+ * 不关心序号，让它们继续只构造语义事件，序号在唯一的出口（/agent-process 的
+ * writeEvent）统一盖上 —— 否则每个 `onEvent({ type: ... })` 调用点都得自己记数，
+ * 漏一处就会出现重放错位。现有字段语义完全不变。
+ */
+export type SequencedAgentEvent = AgentEvent & { seq: number }
+
 /** 工具定义：元信息 + 执行函数 */
 export interface Tool {
   name: string

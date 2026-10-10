@@ -15,6 +15,8 @@ import { getDb } from './store/db'
 import { authConfig } from './utils/config'
 import { runAgent } from './agent/loop'
 import { awaitApproval, clearRunApprovals, resolveApproval } from './agent/approvals'
+import type { RunSink } from './agent/runBuffer'
+import { appendRunEvent, attachRunSink, detachRunSink, finishRun, replayRunEvents } from './agent/runBuffer'
 import { list } from './agent/registry'
 import type { AgentEvent, AgentUsage } from './agent/types'
 import { composeSystemMessage, recallMemories, rememberConversation } from './memory'
@@ -86,28 +88,81 @@ router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
   }
 })
 
-router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
-  // 本次运行的标识：前端凭它调 /agent-approve 回传审批决策（必须在 flushHeaders 之前设置）
-  const runId = randomUUID()
-
+/** SSE 响应头。续传与新运行共用，避免两处写法漂移 */
+function setSseHeaders(res: express.Response, runId: string) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
   // 自定义响应头默认不对跨源 JS 暴露；走 vite 代理时同源本无此问题，此处是额外保险
   res.setHeader('Access-Control-Expose-Headers', 'X-Agent-Run-Id')
   res.setHeader('X-Agent-Run-Id', runId)
+}
+
+/** 一条连接的事件出口。收尾走 sink.close()，这样续传接手后结束的才是对的那条连接 */
+function sinkFor(res: express.Response): RunSink {
+  return {
+    send: event => res.write(`data: ${JSON.stringify(event)}\n\n`),
+    close: () => res.end(),
+  }
+}
+
+router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
+  // 本次运行的标识：前端凭它调 /agent-approve 回传审批决策（必须在 flushHeaders 之前设置）
+  const runId = randomUUID()
+
+  // —— 断点续传（8.1）——
+  // 前端重连时带上「上次运行的 runId」与「最后收到的 seq」。seq 只在单次运行内唯一，
+  // 所以运行标识必须随行 —— 只凭 Last-Event-ID 无法在多轮并发时定位到是哪一次运行。
+  const resumeRunId = typeof req.headers['x-agent-run-id'] === 'string' ? req.headers['x-agent-run-id'] : ''
+  const lastEventId = Number(req.headers['last-event-id'])
+  const wantsResume = resumeRunId !== '' && Number.isInteger(lastEventId) && lastEventId >= 0
+
+  if (wantsResume) {
+    const missed = replayRunEvents(resumeRunId, lastEventId)
+    if (!missed) {
+      // 缓冲已过期 / 已被容量淘汰 / 服务重启过：明确拒绝，让前端自己决定是否整轮重发。
+      // 这里绝不能「顺手」跑一遍新循环 —— 那会重复执行工具、重复计费，且前端会收到两份事件
+      res.status(409).json({ status: 'Fail', message: '续传不可用（运行已结束或超出缓冲窗口）', data: null })
+      return
+    }
+
+    setSseHeaders(res, resumeRunId)
+    res.flushHeaders?.()
+    for (const event of missed)
+      res.write(`data: ${JSON.stringify(event)}\n\n`)
+
+    // 接手后续事件：服务端未必已察觉断线，这次运行可能还在跑。
+    // 挂不上说明运行已结束（补发的缺口里若含 answer，客户端已经拿到定稿），直接收尾
+    const sink = sinkFor(res)
+    if (attachRunSink(resumeRunId, sink)) {
+      const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000)
+      res.on('close', () => {
+        clearInterval(heartbeat)
+        detachRunSink(resumeRunId, sink)
+      })
+    }
+    else {
+      res.end()
+    }
+    return
+  }
+
+  setSseHeaders(res, runId)
   res.flushHeaders?.()
 
   const { prompt, systemMessage, messages, conversationId } = req.body as RequestProps
   const userId = Number(req.user?.sub)
   const hasUser = Number.isInteger(userId) && userId > 0
-  const writeEvent = (event: AgentEvent) => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`)
-  }
+  const sink = sinkFor(res)
+  attachRunSink(runId, sink)
+  // 先入缓冲（顺带盖上 seq）再写出去：seq 与实际发送顺序必然一致，
+  // 重连时客户端凭它报「我收到哪了」，中间不会错位
+  const writeEvent = (event: AgentEvent) => appendRunEvent(runId, event)
 
   // 客户端断开（用户点停止 / 关页面）时中止循环，避免后端继续跑完并消耗 token
   const controller = new AbortController()
   res.on('close', () => {
+    detachRunSink(runId, sink)
     // writableEnded 为 false 说明是客户端提前断开，而非本轮正常结束
     if (!res.writableEnded) {
       controller.abort()
@@ -196,7 +251,9 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
     // 循环结束（正常收尾 / 客户端断开 / 异常）时清空待决审批，按拒绝收尾 ——
     // 否则挂起的 Promise 会一直悬到 60s 超时才释放
     clearRunApprovals(runId)
-    res.end()
+    // 收尾走 finishRun（内部关掉当前出口）而非直接 res.end()：续传接手后出口已换成新连接。
+    // 事件缓冲刻意保留，客户端仍可重连补发到尾部事件（含定稿的 answer）
+    finishRun(runId)
   }
 })
 
