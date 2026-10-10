@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import express from 'express'
 import type { RequestProps } from './types'
 import type { ChatMessage } from './chatgpt'
@@ -11,6 +12,7 @@ import { getJwtSecret } from './auth/secret'
 import { getDb } from './store/db'
 import { authConfig } from './utils/config'
 import { runAgent } from './agent/loop'
+import { awaitApproval, clearRunApprovals, resolveApproval } from './agent/approvals'
 import { list } from './agent/registry'
 import type { AgentEvent } from './agent/types'
 import { composeSystemMessage, recallMemories, rememberConversation } from './memory'
@@ -83,9 +85,15 @@ router.post('/chat-process', [limiter, requireAuth], async (req, res) => {
 })
 
 router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
+  // 本次运行的标识：前端凭它调 /agent-approve 回传审批决策（必须在 flushHeaders 之前设置）
+  const runId = randomUUID()
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  // 自定义响应头默认不对跨源 JS 暴露；走 vite 代理时同源本无此问题，此处是额外保险
+  res.setHeader('Access-Control-Expose-Headers', 'X-Agent-Run-Id')
+  res.setHeader('X-Agent-Run-Id', runId)
   res.flushHeaders?.()
 
   const { prompt, systemMessage, messages, conversationId } = req.body as RequestProps
@@ -128,6 +136,11 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
       tools: list(),
       systemMessage: effectiveSystemMessage,
       signal: controller.signal,
+      // 审批通道：仅登录用户可用。未登录（理论上被 requireAuth 挡住）时不给回调，
+      // loop 按 fail-closed 直接拒绝需审批的工具
+      requestApproval: hasUser
+        ? request => awaitApproval({ runId, toolCallId: request.id, userId })
+        : undefined,
       onEvent: (event) => {
         if (event.type === 'answer')
           answerText = event.content
@@ -157,8 +170,39 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
   }
   finally {
     clearInterval(heartbeat)
+    // 循环结束（正常收尾 / 客户端断开 / 异常）时清空待决审批，按拒绝收尾 ——
+    // 否则挂起的 Promise 会一直悬到 60s 超时才释放
+    clearRunApprovals(runId)
     res.end()
   }
+})
+
+/**
+ * 工具审批决策回传：唤醒 /agent-process 中挂起等待的循环。
+ * SSE 是单向的，决策只能走这条独立请求 —— 见 agent/approvals.ts 的说明。
+ */
+router.post('/agent-approve', [limiter, requireAuth], (req, res) => {
+  const { runId, toolCallId, approved } = req.body as { runId?: string; toolCallId?: string; approved?: boolean }
+  const userId = Number(req.user?.sub)
+
+  if (!runId || !toolCallId || !Number.isInteger(userId) || userId <= 0) {
+    res.status(400).json({ status: 'Fail', message: '缺少 runId / toolCallId，或登录态无效', data: null })
+    return
+  }
+
+  const result = resolveApproval({ runId, toolCallId, userId, approved: approved === true })
+
+  if (result === 'not-found') {
+    // 该运行已结束（循环退出 / 已超时），决策无处可送
+    res.status(409).json({ status: 'Fail', message: '该审批已失效（运行已结束或已超时）', data: null })
+    return
+  }
+  if (result === 'forbidden') {
+    res.status(403).json({ status: 'Fail', message: '无权决策他人的运行', data: null })
+    return
+  }
+
+  res.json({ status: 'Success', message: '', data: { approved: approved === true } })
 })
 
 router.post('/config', async (req, res) => {
@@ -209,10 +253,14 @@ router.post('/verify', async (req, res) => {
 
 app.use('', authRouter)
 app.use('/api', authRouter)
-app.use('', conversationRouter)
-app.use('/api', conversationRouter)
 app.use('', router)
 app.use('/api', router)
+// conversationRouter 内部是 `router.use(requireAuth)`（整个路由全量鉴权），必须挂在主 router 之后：
+// Express 按注册顺序执行中间件，挂前面会让 /session、/config、/verify 这些公开端点也被要求带 token，
+// 前端守卫拿不到 /session 就跳 /500 —— 未登录用户（含退出登录后、新用户）永远打不开登录页。
+// 两者的路由前缀不重叠（/conversation/* vs 其余），换序不影响各自匹配
+app.use('', conversationRouter)
+app.use('/api', conversationRouter)
 app.set('trust proxy', 1)
 
 // 鉴权自检：数据库可用性与鉴权模式在启动时明确打出，避免运行中才发现配置问题

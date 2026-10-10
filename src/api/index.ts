@@ -216,12 +216,14 @@ export function fetchConversationDelete<T = { deleted: boolean }>(uuid: number) 
 
 /** Agent 模式 SSE 事件（与后端 /agent-process 推送格式对应） */
 export interface AgentEvent {
-  type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'answer' | 'error'
+  type: 'thought' | 'text_delta' | 'tool_call' | 'tool_result' | 'tool_approval_request' | 'answer' | 'error'
   content?: string
   id?: string
   name?: string
   arguments?: string
   message?: string
+  /** 仅 tool_approval_request：展示给用户的审批理由 */
+  reason?: string
 }
 
 /** Agent 连接状态：connecting（请求已发出）→ live（已收到首个事件）→ closed（流结束或出错）；
@@ -240,10 +242,12 @@ export interface FetchAgentProcessParams {
   onEvent: (event: AgentEvent) => void
   /** 连接状态变化回调（用于上层做静默超时提示与手动重试） */
   onStateChange?: (state: AgentConnectionState) => void
+  /** 本次运行的 runId（响应头 X-Agent-Run-Id）：审批决策凭它回传 */
+  onRunId?: (runId: string) => void
 }
 
 /** 调用 /agent-process，SSE 逐帧解析并以回调方式暴露 */
-export function fetchAgentProcess({ prompt, systemMessage, messages, conversationId, signal, onEvent, onStateChange }: FetchAgentProcessParams): Promise<void> {
+export function fetchAgentProcess({ prompt, systemMessage, messages, conversationId, signal, onEvent, onStateChange, onRunId }: FetchAgentProcessParams): Promise<void> {
   const authStore = useAuthStore()
   const controller = new AbortController()
   const onAbort = () => controller.abort()
@@ -269,6 +273,11 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, conversatio
 
       if (!response.ok || !response.body)
         throw new Error(`Agent 请求失败：HTTP ${response.status}`)
+
+      // 审批决策要凭 runId 走 /agent-approve 回传，必须在读流前先拿到并上报
+      const runId = response.headers.get('X-Agent-Run-Id')
+      if (runId)
+        onRunId?.(runId)
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
@@ -316,4 +325,15 @@ export function fetchAgentProcess({ prompt, systemMessage, messages, conversatio
       signal?.removeEventListener('abort', onAbort)
       onStateChange?.('closed')
     })
+}
+
+/**
+ * 回传工具审批决策，唤醒 /agent-process 里挂起等待的循环。
+ * SSE 是单向的，决策只能走这条独立请求；runId 来自 /agent-process 的 X-Agent-Run-Id 响应头
+ */
+export function fetchAgentApprove<T = { approved: boolean }>(runId: string, toolCallId: string, approved: boolean) {
+  return post<T>({
+    url: '/agent-approve',
+    data: { runId, toolCallId, approved },
+  })
 }

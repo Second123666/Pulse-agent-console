@@ -1,4 +1,5 @@
 import type { Server } from 'node:http'
+import { readFileSync } from 'node:fs'
 import express from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -248,5 +249,25 @@ describe('会话持久化端点（HTTP 级）', () => {
     const serialized = JSON.stringify(list.body)
     expect(serialized).not.toContain('password_hash')
     expect(serialized).not.toContain('agent_steps_json')
+  })
+})
+
+describe('挂载顺序', () => {
+  /**
+   * conversationRouter 内部是 `router.use(requireAuth)` 全量鉴权，一旦挂在主 router 之前，
+   * /session、/config、/verify 这些公开端点也会被要求带 token —— 前端守卫拿不到 /session
+   * 就跳 /500，未登录用户（退出登录后、新用户）永远打不开登录页。
+   *
+   * index.ts 一被 import 就会 listen(3002) 并拉起工具/MCP，无法在单测里实例化，
+   * 所以这条只存在于挂载顺序里的不变式，只能对源码文本断言。
+   */
+  it('主 router 必须挂在 conversationRouter 之前', () => {
+    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf-8')
+    const mainAt = source.indexOf('app.use(\'\', router)')
+    const conversationAt = source.indexOf('app.use(\'\', conversationRouter)')
+
+    expect(mainAt).toBeGreaterThan(-1)
+    expect(conversationAt).toBeGreaterThan(-1)
+    expect(mainAt).toBeLessThan(conversationAt)
   })
 })

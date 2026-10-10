@@ -14,10 +14,18 @@ import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
 import { useChatStore, usePromptStore, useSettingStore } from '@/store'
-import { fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
+import { fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
 
 let controller = new AbortController()
+
+// 当前 Agent 运行的 runId（来自响应头 X-Agent-Run-Id）：审批决策凭它回传 /agent-approve。
+// 同一时刻只可能有一个运行在跑（loading 挡住了并发提交），单个变量足够
+let activeRunId = ''
+// 当前运行正在累积的步骤流与其消息下标。审批点击（用户）与 SSE 事件（循环）是两条写入路径，
+// 共享同一个数组对象才能保证互不覆盖 —— 各存一份的话，后写的那次会把对方的决策状态抹掉
+let activeSteps: Chat.AgentStep[] = []
+let activeStepsIndex = -1
 
 const openLongReply = import.meta.env.VITE_GLOB_OPEN_LONG_REPLY === 'true'
 
@@ -95,11 +103,51 @@ function toggleAgentMode() {
   settingStore.updateSetting({ agentMode: !settingStore.agentMode })
 }
 
+/**
+ * 审批卡片状态迁移：把 id 匹配、且当前恰为 from 的审批步骤改为 to，并写回消息。
+ * 用「新对象替换 + 新数组」而非就地改字段 —— 就地改不会触发已渲染步骤的重渲染。
+ * 返回是否命中：from 守卫让「重复点击」与「回滚时状态已被 tool_result 改写」都能安全跳过
+ */
+function setApprovalDecision(toolCallId: string, from: boolean | undefined, to: boolean | undefined): boolean {
+  const stepIndex = activeSteps.findIndex(step => step.type === 'tool_approval' && step.id === toolCallId && step.approved === from)
+  if (stepIndex === -1)
+    return false
+  activeSteps[stepIndex] = { ...activeSteps[stepIndex], approved: to }
+  updateChatSome(+uuid, activeStepsIndex, { agentSteps: [...activeSteps] })
+  return true
+}
+
+/** 用户在审批卡片上点了「允许 / 拒绝」：乐观落定 → 回传决策 → 失败回滚为待决策 */
+async function handleApprove(toolCallId: string, approved: boolean) {
+  // 只接受「待决策 → 已决策」这一条迁移：重复点击、以及早已决策/失效的卡片都在此被忽略
+  if (!setApprovalDecision(toolCallId, undefined, approved))
+    return
+
+  if (!activeRunId) {
+    // 本轮运行已结束，决策无处可送：回滚，避免卡片停在「已允许」而实际什么都没发生
+    setApprovalDecision(toolCallId, approved, undefined)
+    ms.error('该审批已失效：本轮运行已结束')
+    return
+  }
+
+  try {
+    await fetchAgentApprove(activeRunId, toolCallId, approved)
+  }
+  catch (error: any) {
+    // 回滚带 from 守卫：若期间已收到 tool_result（后端超时按拒绝处理），此处不会把它改回待决策
+    setApprovalDecision(toolCallId, approved, undefined)
+    ms.error(error?.message ?? '审批提交失败，请重试')
+  }
+}
+
 /** Agent 对话核心：向 userMsgIndex + 1 处的助手占位消息流式写入，onConversation 与 onRegenerate 共用。
  * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。 */
 async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}) {
   const targetIndex = userMsgIndex + 1
   const agentSteps: Chat.AgentStep[] = []
+  // 交给审批点击共用（见 activeSteps 的说明）
+  activeSteps = agentSteps
+  activeStepsIndex = targetIndex
   // 实时增量缓冲：text_delta 累积于此并即时渲染。
   // 收到 thought 说明该轮调用了工具 → 缓冲归入步骤流；收到 answer 则用定稿文本覆盖
   let streamBuffer = ''
@@ -134,8 +182,15 @@ async function runAgentConversation(promptText: string, controller: AbortControl
       silenceTimer = null
     }
   }
+  // 等待用户审批期间豁免静默计时：循环本就挂起在等决策，收不到事件是预期行为，
+  // 照常计时会把「等你点允许」误判成断线并 abort 掉这次运行
+  // 读本地数组而非 store：审批点击与事件流写的是同一份（activeSteps === agentSteps），这里必然最新
+  const hasPendingApproval = () =>
+    agentSteps.some(step => step.type === 'tool_approval' && step.approved === undefined)
   const resetSilenceTimer = () => {
     clearSilenceTimer()
+    if (hasPendingApproval())
+      return
     silenceTimer = setTimeout(() => {
       silenceTimer = null
       // 连接可能已中断：中止这个已无意义的请求（释放输入框与「停止」按钮，否则重试会被 loading 挡住），
@@ -152,13 +207,20 @@ async function runAgentConversation(promptText: string, controller: AbortControl
     // 会话 uuid：后端据此把长期记忆摘要挂到本会话上
     conversationId: +uuid,
     signal: controller.signal,
+    onRunId: (runId) => {
+      activeRunId = runId
+    },
     onStateChange: (state) => {
       // connecting 就开始计时：连接被静默黑洞化时（服务端接了连接却永不响应）根本等不到首个事件，
       // 只在 live 后计时会让这种最需要提示的情况反而检测不到
-      if (state === 'connecting' || state === 'live')
+      if (state === 'connecting' || state === 'live') {
         resetSilenceTimer()
-      else if (state === 'closed')
+      }
+      else if (state === 'closed') {
         clearSilenceTimer()
+        // 运行已结束：审批决策再无接收方，清掉避免后续点击拿着过期 runId 去请求
+        activeRunId = ''
+      }
     },
     onEvent: (event) => {
       // 收到任何事件都说明连接仍活着：清掉中断提示并重置静默计时
@@ -181,6 +243,13 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         agentSteps.push({ type: 'tool_call', id: event.id, name: event.name, arguments: event.arguments })
         updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
       }
+      else if (event.type === 'tool_approval_request') {
+        // 需审批的工具已挂起等决策：卡片内渲染「允许 / 拒绝」
+        agentSteps.push({ type: 'tool_approval', id: event.id, name: event.name, arguments: event.arguments, reason: event.reason })
+        updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
+        // 重新计时：此时状态里已有待决策步骤，resetSilenceTimer 会据此豁免计时
+        resetSilenceTimer()
+      }
       else if (event.type === 'tool_result') {
         // 落盘前裁剪超长结果：后端已按 AGENT_TOOL_RESULT_MAX_CHARS（默认 8000）截断一份喂给模型，
         // 这里再截更短的一份（2000），只关落盘体积与渲染，不影响模型实际看到的内容
@@ -188,6 +257,12 @@ async function runAgentConversation(promptText: string, controller: AbortControl
         const content = rawContent.length > AGENT_TOOL_RESULT_MAX_CHARS
           ? `${rawContent.slice(0, AGENT_TOOL_RESULT_MAX_CHARS)}\n[已截断：原 ${rawContent.length} 字符]`
           : rawContent
+        // 结果已到但卡片仍是「待决策」→ 不是用户点的（后端 60s 超时按拒绝处理），落定为已拒绝。
+        // 否则卡片永远停在待决策态，且静默计时会被永久豁免
+        if (setApprovalDecision(event.id ?? '', undefined, false)) {
+          // 刚解除豁免，补一次计时（上方那次 reset 因「有待决策步骤」而没有真正计时）
+          resetSilenceTimer()
+        }
         agentSteps.push({ type: 'tool_result', id: event.id, name: event.name, content })
         updateChatSome(+uuid, targetIndex, { agentSteps: [...agentSteps] })
       }
@@ -767,7 +842,7 @@ onUnmounted(() => {
                   :agent-steps="item.agentSteps"
                   :agent-stalled="item.agentStalled"
                   @regenerate="onRegenerate(index)" @delete="handleDelete(index)" @reply="handleReply"
-                  @speak="speakText"
+                  @speak="speakText" @approve="handleApprove"
                 />
                 <div class="sticky bottom-0 left-0 flex justify-center">
                   <NButton v-if="loading" type="warning" @click="handleStop">

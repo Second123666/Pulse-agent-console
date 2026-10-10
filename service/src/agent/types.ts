@@ -7,6 +7,8 @@ export type AgentEvent =
   | { type: 'text_delta'; content: string }
   | { type: 'tool_call'; id: string; name: string; arguments: string }
   | { type: 'tool_result'; id: string; name: string; content: string }
+  /** 需审批的工具已挂起等待用户决策（纯增量事件，不影响既有事件语义） */
+  | { type: 'tool_approval_request'; id: string; name: string; arguments: string; reason: string }
   | { type: 'answer'; content: string }
   | { type: 'error'; message: string }
 
@@ -16,6 +18,10 @@ export interface Tool {
   description: string
   parameters: Record<string, unknown>
   handler: (args: Record<string, unknown>) => Promise<string> | string
+  /** 执行前是否需用户确认（human-in-the-loop）；缺省 false */
+  requiresApproval?: boolean
+  /** 展示给用户的审批理由（requiresApproval 为真时建议填写） */
+  approvalReason?: string
 }
 
 /** 一次 Agent 运行的输入参数 */
@@ -33,6 +39,11 @@ export interface AgentRunOptions {
   tokenBudget?: number
   /** 中止信号：客户端断开时中止循环，避免继续消耗 token */
   signal?: AbortSignal
+  /**
+   * 需审批的工具执行前调用，挂起等待用户决策，resolve(true) 才执行。
+   * **缺省视为拒绝（fail-closed）** —— 未接线审批通道时，需审批的工具一律不执行
+   */
+  requestApproval?: (request: { id: string; name: string; arguments: string; reason: string }) => Promise<boolean>
 }
 
 export type { OpenAIToolCall }

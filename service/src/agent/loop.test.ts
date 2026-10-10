@@ -337,4 +337,143 @@ describe('runAgent', () => {
     // 串行下限 360ms，并发约 120ms；阈值取 250ms 使两侧都留有余量（CI 抖动）
     expect(elapsed).toBeLessThan(250)
   })
+
+  /** 需用户审批的工具 */
+  function gatedTool(name: string, output: string, reason = '需要确认'): Tool {
+    return {
+      name,
+      description: '需审批的工具',
+      parameters: {},
+      requiresApproval: true,
+      approvalReason: reason,
+      handler: () => output,
+    }
+  }
+
+  it('需审批工具：批准后正常执行，审批事件先于结果且带出名称/参数/理由', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'gated', args: '{"q":"x"}' }])))
+      .mockImplementationOnce(asStream(textResult('已执行')))
+    const events: AgentEvent[] = []
+    const seenRequests: Array<{ name: string; reason: string }> = []
+
+    await runAgent({
+      messages: [{ role: 'user', content: '跑' }],
+      tools: [gatedTool('gated', '结果甲')],
+      onEvent: e => events.push(e),
+      requestApproval: async (req) => {
+        seenRequests.push(req)
+        return true
+      },
+    })
+
+    const requests = ofType(events, 'tool_approval_request')
+    expect(requests).toHaveLength(1)
+    expect(requests[0].name).toBe('gated')
+    expect(requests[0].arguments).toBe('{"q":"x"}')
+    expect(requests[0].reason).toBe('需要确认')
+    expect(seenRequests).toHaveLength(1)
+
+    // 审批事件必须先于该工具的结果
+    const types = events.map(e => e.type)
+    expect(types.indexOf('tool_approval_request')).toBeLessThan(types.indexOf('tool_result'))
+    expect(ofType(events, 'tool_result')[0].content).toBe('结果甲')
+  })
+
+  it('需审批工具：拒绝时工具不执行，回填 [tool error] 用户未批准执行，循环仍能自愈收尾', async () => {
+    let executed = false
+    const tool: Tool = {
+      name: 'gated',
+      description: '需审批',
+      parameters: {},
+      requiresApproval: true,
+      handler: () => {
+        executed = true
+        return '不该出现'
+      },
+    }
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'gated' }])))
+      .mockImplementationOnce(asStream(textResult('那我换个方式回答')))
+    const events: AgentEvent[] = []
+
+    await runAgent({
+      messages: [{ role: 'user', content: '跑' }],
+      tools: [tool],
+      onEvent: e => events.push(e),
+      requestApproval: async () => false,
+    })
+
+    expect(executed).toBe(false)
+    expect(ofType(events, 'tool_result')[0].content).toBe('[tool error] 用户未批准执行')
+    // 拒绝不阻断循环，模型据错误文本自愈后仍给出回答
+    expect(events.at(-1)?.type).toBe('answer')
+  })
+
+  it('需审批工具：未接线审批通道时 fail-closed 拒绝（不默认放行）', async () => {
+    let executed = false
+    const tool: Tool = {
+      name: 'gated',
+      description: '需审批',
+      parameters: {},
+      requiresApproval: true,
+      handler: () => {
+        executed = true
+        return '不该出现'
+      },
+    }
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'gated' }])))
+      .mockImplementationOnce(asStream(textResult('好的')))
+    const events: AgentEvent[] = []
+
+    // 刻意不传 requestApproval
+    await runAgent({
+      messages: [{ role: 'user', content: '跑' }],
+      tools: [tool],
+      onEvent: e => events.push(e),
+    })
+
+    expect(executed).toBe(false)
+    expect(ofType(events, 'tool_result')[0].content).toContain('用户未批准执行')
+  })
+
+  it('并发 + 审批：同轮两个需审批工具各自独立决策，拒绝一个不影响另一个', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'a' }, { name: 'b' }])))
+      .mockImplementationOnce(asStream(textResult('完成')))
+    const events: AgentEvent[] = []
+
+    await runAgent({
+      messages: [{ role: 'user', content: '跑' }],
+      tools: [gatedTool('a', '甲'), gatedTool('b', '乙')],
+      onEvent: e => events.push(e),
+      // 只批准 a
+      requestApproval: async req => req.name === 'a',
+    })
+
+    expect(ofType(events, 'tool_approval_request').map(e => e.name)).toEqual(['a', 'b'])
+    const results = ofType(events, 'tool_result')
+    expect(results.map(r => r.name)).toEqual(['a', 'b'])
+    expect(results[0].content).toBe('甲')
+    expect(results[1].content).toContain('用户未批准执行')
+  })
+
+  it('无需审批的工具不触发审批事件（既有工具行为不变）', async () => {
+    mockChatCompletionStream
+      .mockImplementationOnce(asStream(toolCallsResult([{ name: 'get_time' }])))
+      .mockImplementationOnce(asStream(textResult('好')))
+    const events: AgentEvent[] = []
+    const requestApproval = vi.fn(async () => true)
+
+    await runAgent({
+      messages: [{ role: 'user', content: '几点' }],
+      tools: [timeTool],
+      onEvent: e => events.push(e),
+      requestApproval,
+    })
+
+    expect(ofType(events, 'tool_approval_request')).toHaveLength(0)
+    expect(requestApproval).not.toHaveBeenCalled()
+  })
 })

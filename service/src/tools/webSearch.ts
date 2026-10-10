@@ -35,6 +35,9 @@ export const webSearch: Tool = {
     },
     required: ['query'],
   },
+  // 每次调用都消耗搜索配额（按量计费），执行前需用户确认
+  requiresApproval: true,
+  approvalReason: '联网搜索会消耗博查搜索配额（按量计费）',
   handler: async (args) => {
     const query = String(args.query ?? '').trim()
     if (!query)

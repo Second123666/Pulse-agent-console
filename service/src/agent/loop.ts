@@ -1,4 +1,5 @@
 import { agentConfig } from '../utils/config'
+import { APPROVAL_DENIED_MESSAGE } from './approvals'
 import { type OpenAIMessage, type OpenAITool, chatCompletionStream } from './openaiClient'
 import type { AgentRunOptions } from './types'
 
@@ -117,6 +118,20 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
       if (!tool)
         throw new Error(`Unknown tool: ${call.function.name}`)
       const args = JSON.parse(call.function.arguments || '{}')
+
+      // 需审批的工具：先推审批事件，再挂起等待用户决策。
+      // 未接线审批通道时一律拒绝（fail-closed，不默认放行）；
+      // 拒绝与超时都落到下方 catch，按既有自愈策略回填 [tool error]，模型可据此改道
+      if (tool.requiresApproval) {
+        const reason = tool.approvalReason ?? '该工具需要确认后才会执行'
+        options.onEvent({ type: 'tool_approval_request', id: call.id, name: call.function.name, arguments: call.function.arguments, reason })
+        const approved = options.requestApproval
+          ? await options.requestApproval({ id: call.id, name: call.function.name, arguments: call.function.arguments, reason })
+          : false
+        if (!approved)
+          throw new Error(APPROVAL_DENIED_MESSAGE)
+      }
+
       // 单点截断：回填模型上下文与 SSE 事件用同一份截断结果，
       // 保证「模型看到的」与「前端收到的」一致（前端另有更小阈值的展示截断）
       return truncateToolResult(String(await tool.handler(args)))

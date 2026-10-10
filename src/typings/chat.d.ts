@@ -1,11 +1,15 @@
 declare namespace Chat {
 
 	interface AgentStep {
-		type: 'thought' | 'tool_call' | 'tool_result'
+		type: 'thought' | 'tool_call' | 'tool_result' | 'tool_approval'
 		content?: string
 		id?: string
 		name?: string
 		arguments?: string
+		/** 仅 tool_approval：展示给用户的审批理由 */
+		reason?: string
+		/** 仅 tool_approval：undefined = 待决策，true = 已批准，false = 已拒绝/超时 */
+		approved?: boolean
 	}
 
 	interface Chat {

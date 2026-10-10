@@ -16,6 +16,9 @@ export const readFileTool: Tool = {
     },
     required: ['path'],
   },
+  // 读取本地文件属敏感操作（虽已限制在仓库内），执行前需用户确认
+  requiresApproval: true,
+  approvalReason: '读取本地仓库文件，可能包含敏感内容',
   handler: async (args) => {
     const filePath = String(args.path ?? '').trim()
     if (!filePath)

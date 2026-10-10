@@ -26,6 +26,8 @@ interface Emit {
   (ev: 'delete'): void
   (ev: 'reply', text: string): void
   (ev: 'speak', text: string): void
+  /** 工具审批决策（id = toolCallId，approved 为用户的决定） */
+  (ev: 'approve', id: string, approved: boolean): void
 }
 
 const props = defineProps<Props>()
@@ -132,7 +134,10 @@ async function handleCopy() {
             ref="textRef" :inversion="inversion" :error="error" :text="text" :loading="loading"
             :as-raw-text="asRawText"
           />
-          <ToolCallCard v-if="agentSteps?.length && !inversion" :steps="agentSteps" />
+          <ToolCallCard
+            v-if="agentSteps?.length && !inversion" :steps="agentSteps" :interactive="!!loading"
+            @approve="(id, approved) => emit('approve', id, approved)"
+          />
           <div
             v-if="agentStalled && !inversion"
             class="flex items-center gap-3 mt-2 px-3 py-2 text-xs rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700"
