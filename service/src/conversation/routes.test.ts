@@ -252,6 +252,98 @@ describe('会话持久化端点（HTTP 级）', () => {
   })
 })
 
+describe('会话消息检索（9.5）', () => {
+  /** 带 token 调 GET /conversation/search */
+  async function search(token: string | null, q: string, limit?: number) {
+    const params = new URLSearchParams({ q, ...(limit === undefined ? {} : { limit: String(limit) }) })
+    const response = await fetch(`${base}/conversation/search?${params}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    return { response, body: await response.json() as any }
+  }
+
+  it('无 token → 401；空搜索词 / 超长搜索词 → 400', async () => {
+    expect((await search(null, '你好')).response.status).toBe(401)
+
+    const token = await register('alice')
+    expect((await search(token, '   ')).response.status).toBe(400)
+    expect((await search(token, 'x'.repeat(101))).response.status).toBe(400)
+  })
+
+  it('搜到只出现在旧会话里的词：返回所属会话、片段，且下标与 /conversation/get 顺序对齐', async () => {
+    const token = await register('alice')
+    await call('/conversation/save', token, {
+      conversations: [
+        conversation(1001, '最近聊的', ['今天天气不错']),
+        // 命中在第 3 条（下标 2），用来证明 messageIndex 是真算出来的而不是恒为 0
+        conversation(1002, '很早以前的会话', ['第一轮', '好的', '「蓝鲸计划」是什么？']),
+      ],
+    })
+
+    const { response, body } = await search(token, '蓝鲸计划')
+    expect(response.status).toBe(200)
+    expect(body.data.hits).toHaveLength(1)
+
+    const [hit] = body.data.hits
+    expect(hit).toMatchObject({ conversationUuid: 1002, conversationTitle: '很早以前的会话', role: 'user', messageIndex: 2 })
+    // 片段里确实含命中词，且区间指的就是它（前端凭这个区间做高亮）
+    expect(hit.snippet.slice(hit.matchStart, hit.matchEnd)).toBe('蓝鲸计划')
+
+    // 前端跳转靠 messageIndex 定位，必须与取回的消息顺序一一对应
+    const got = await call('/conversation/get', token, { uuid: 1002 })
+    const messages = got.body.data.conversations[0].messages
+    expect(messages[hit.messageIndex].content).toContain('蓝鲸计划')
+  })
+
+  it('长正文：片段围绕命中词截取，两端补省略号且区间仍落在片段内', async () => {
+    const token = await register('alice')
+    await call('/conversation/save', token, {
+      conversations: [conversation(1, '长文', [`${'前'.repeat(100)}目标词${'后'.repeat(100)}`])],
+    })
+
+    const { body } = await search(token, '目标词')
+    const [hit] = body.data.hits
+    expect(hit.snippet.startsWith('…')).toBe(true)
+    expect(hit.snippet.endsWith('…')).toBe(true)
+    expect(hit.snippet).toContain('目标词')
+    expect(hit.snippet.slice(hit.matchStart, hit.matchEnd)).toBe('目标词')
+  })
+
+  it('LIKE 通配符被转义：搜 % 不会退化成「匹配全部」', async () => {
+    const token = await register('alice')
+    await call('/conversation/save', token, {
+      conversations: [conversation(1, 'A', ['普通消息']), conversation(2, 'B', ['完成度 100%'])],
+    })
+
+    const percent = await search(token, '%')
+    expect(percent.body.data.hits).toHaveLength(1)
+    expect(percent.body.data.hits[0].conversationUuid).toBe(2)
+
+    // `_` 是 LIKE 的单字符通配符，转义后应当匹配不到任何正文
+    expect((await search(token, '_')).body.data.hits).toEqual([])
+  })
+
+  it('多租户隔离：bob 搜不到 alice 的消息', async () => {
+    const alice = await register('alice')
+    const bob = await register('bob')
+    await call('/conversation/save', alice, { conversations: [conversation(1002, 'alice 的会话', ['秘密口令是芒果'])] })
+
+    expect((await search(alice, '芒果')).body.data.hits).toHaveLength(1)
+    expect((await search(bob, '芒果')).body.data.hits).toEqual([])
+  })
+
+  it('limit 生效并被夹在上限内，非法值回落到默认', async () => {
+    const token = await register('alice')
+    await call('/conversation/save', token, {
+      conversations: Array.from({ length: 5 }, (_, i) => conversation(i + 1, `会话${i + 1}`, [`关键词 ${i + 1}`])),
+    })
+
+    expect((await search(token, '关键词')).body.data.hits).toHaveLength(5)
+    expect((await search(token, '关键词', 2)).body.data.hits).toHaveLength(2)
+    expect((await search(token, '关键词', -3)).body.data.hits).toHaveLength(5)
+  })
+})
+
 describe('挂载顺序', () => {
   /**
    * conversationRouter 内部是 `router.use(requireAuth)` 全量鉴权，一旦挂在主 router 之前，

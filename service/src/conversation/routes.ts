@@ -2,7 +2,7 @@ import type { Request, Response } from 'express'
 import express from 'express'
 import { requireAuth } from '../middleware/auth'
 import type { StoredConversation, StoredMessage } from './store'
-import { deleteConversation, getConversations, listConversations, saveConversations } from './store'
+import { deleteConversation, getConversations, listConversations, saveConversations, searchMessages } from './store'
 
 export const conversationRouter = express.Router()
 
@@ -12,6 +12,11 @@ conversationRouter.use(requireAuth)
 /** 单次全量保存的规模上限：挡住畸形/恶意载荷把内存与库撑爆（正常使用远低于此） */
 const MAX_CONVERSATIONS = 200
 const MAX_MESSAGES_PER_CONVERSATION = 2000
+
+/** 检索：搜索词长度上限（超过只会拖慢全表扫描，且已超出任何真实查询的长度） */
+const MAX_SEARCH_QUERY = 100
+const DEFAULT_SEARCH_LIMIT = 20
+const MAX_SEARCH_LIMIT = 50
 
 function fail(res: Response, status: number, message: string) {
   res.status(status).json({ status: 'Fail', message, data: null })
@@ -153,6 +158,40 @@ conversationRouter.post('/conversation/get', (req, res) => {
   }
   catch (error: any) {
     fail(res, 500, error?.message ?? '读取会话失败')
+  }
+})
+
+/**
+ * 跨会话检索消息正文。
+ *
+ * 用 GET + query 参数（与本文件其余 POST 端点不同）：这是纯读取、无副作用，
+ * GET 语义正确，也让结果可被缓存与直接收藏。
+ */
+conversationRouter.get('/conversation/search', (req, res) => {
+  const userId = currentUserId(req, res)
+  if (userId === null)
+    return
+
+  const raw = typeof req.query?.q === 'string' ? req.query.q.trim() : ''
+  if (!raw) {
+    fail(res, 400, '搜索词不能为空')
+    return
+  }
+  if (raw.length > MAX_SEARCH_QUERY) {
+    fail(res, 400, `搜索词过长（上限 ${MAX_SEARCH_QUERY} 字）`)
+    return
+  }
+
+  const rawLimit = Number(req.query?.limit)
+  const limit = (Number.isFinite(rawLimit) && rawLimit > 0)
+    ? Math.min(MAX_SEARCH_LIMIT, Math.trunc(rawLimit))
+    : DEFAULT_SEARCH_LIMIT
+
+  try {
+    res.json({ status: 'Success', message: '', data: { hits: searchMessages(userId, raw, limit) } })
+  }
+  catch (error: any) {
+    fail(res, 500, error?.message ?? '检索消息失败')
   }
 })
 

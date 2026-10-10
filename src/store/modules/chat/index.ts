@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { defaultState, getLocalState, setLocalState } from './helper'
 import { router } from '@/router'
@@ -78,6 +79,27 @@ function toServerConversations(state: Chat.ChatState): ServerConversation[] {
       messages,
     }
   })
+}
+
+/**
+ * 「跳到某条消息并高亮」的一次性目标（9.5 会话搜索）。
+ *
+ * 刻意放在模块作用域而非 state —— 它是瞬时的 UI 意图，绝不能进 localStorage：
+ * 持久化会让下次打开应用时凭空闪一下某条旧消息。
+ *
+ * 用 ref 而非普通变量，是因为目标通常在 Chat 视图**已经挂载之后**才被设置
+ * （命令面板要先 `setActive` 切路由），视图得能 watch 到这次变化。
+ */
+export const pendingJumpTarget = ref<{ uuid: number; index: number } | null>(null)
+
+/** 设置跳转目标（命令面板选中一条消息命中时调用） */
+export function setPendingJump(uuid: number, index: number) {
+  pendingJumpTarget.value = { uuid, index }
+}
+
+/** 清掉跳转目标（已定位，或重试到放弃时调用） */
+export function clearPendingJump() {
+  pendingJumpTarget.value = null
 }
 
 export const useChatStore = defineStore('chat-store', {

@@ -190,6 +190,95 @@ export function saveConversations(userId: number, conversations: StoredConversat
   return { saved: kept.length, deleted: Math.max(0, before - kept.length) }
 }
 
+/** 一条消息检索命中 */
+export interface MessageSearchHit {
+  conversationUuid: number
+  conversationTitle: string
+  role: 'user' | 'assistant'
+  /** 命中片段：折叠换行 + 截取命中词前后各若干字，两端越界时补省略号 */
+  snippet: string
+  /** 命中词在 snippet 中的区间（下标相对 snippet），供前端高亮 */
+  matchStart: number
+  matchEnd: number
+  /** 该消息在所属会话中的下标（0 起）—— 与 getConversations 的 messages 顺序一致，前端凭它定位 */
+  messageIndex: number
+  createdAt: number
+}
+
+/** 片段里命中词左右各保留的字数 */
+const SNIPPET_RADIUS = 40
+/** 片段总长上限（命中词本身超长时截断） */
+const SNIPPET_MAX = 160
+/** 未命中时的兜底片段长度 */
+const SNIPPET_HEAD = 80
+
+/** LIKE 的转义符。SQLite 的 LIKE 默认没有转义符，不显式声明就搜不了 `%` / `_` 本身 */
+const LIKE_ESCAPE = '\\'
+
+/** 转义 LIKE 的通配符，让用户搜 `100%` 时不会退化成「匹配任意内容」 */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, ch => `${LIKE_ESCAPE}${ch}`)
+}
+
+/**
+ * 从正文里截出命中片段。
+ *
+ * 大小写折叠用 `toLowerCase()` 而非 SQLite 的 LIKE：后者只对 ASCII 折叠，
+ * 与 JS 的差异只可能出现在非 ASCII 的大小写对上，那时这里会走兜底分支（不高亮），
+ * 不影响「搜到了哪条」的正确性。
+ */
+function buildSnippet(content: string, query: string): { snippet: string, matchStart: number, matchEnd: number } {
+  // 折叠所有空白：正文里的换行会把片段撑成多行，面板里显示不下
+  const flat = content.replace(/\s+/g, ' ').trim()
+  const index = flat.toLowerCase().indexOf(query.toLowerCase())
+  if (index < 0)
+    return { snippet: flat.slice(0, SNIPPET_HEAD), matchStart: 0, matchEnd: 0 }
+
+  const start = Math.max(0, index - SNIPPET_RADIUS)
+  const end = Math.min(flat.length, index + query.length + SNIPPET_RADIUS)
+  const prefix = start > 0 ? '…' : ''
+  const suffix = end < flat.length ? '…' : ''
+  const snippet = `${prefix}${flat.slice(start, Math.min(end, start + SNIPPET_MAX))}${suffix}`
+  const matchStart = prefix.length + (index - start)
+
+  return { snippet, matchStart, matchEnd: matchStart + query.length }
+}
+
+/**
+ * 跨会话检索消息正文。
+ *
+ * **多租户隔离**：messages 表没有 user_id，一律 JOIN conversations 并按 `c.user_id = ?`
+ * 过滤 —— 不存在「按消息 id 直查」的旁路。
+ *
+ * 用 LIKE 而非 FTS5：FTS5 的默认分词器（unicode61）不切中文词，中文查询会整段当成
+ * 一个 token 而搜不到；上 ICU 分词又要额外的 SQLite 编译选项。本项目的语料是个人
+ * 会话（量级几千条），LIKE 的全表扫描完全够用，且中文子串匹配天然正确。
+ */
+export function searchMessages(userId: number, query: string, limit: number): MessageSearchHit[] {
+  const rows = getDb().prepare(`
+    SELECT c.uuid AS conversationUuid, c.title AS conversationTitle,
+           m.role, m.content, m.created_at,
+           (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = m.conversation_id AND m2.id < m.id) AS messageIndex
+    FROM messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE c.user_id = ? AND m.content LIKE ? ESCAPE '${LIKE_ESCAPE}'
+    ORDER BY m.id DESC
+    LIMIT ?
+  `).all(userId, `%${escapeLike(query)}%`, limit) as any[]
+
+  return rows.map((row) => {
+    const content = String(row.content ?? '')
+    return {
+      conversationUuid: Number(row.conversationUuid),
+      conversationTitle: String(row.conversationTitle ?? ''),
+      role: row.role === 'user' ? 'user' as const : 'assistant' as const,
+      ...buildSnippet(content, query),
+      messageIndex: Number(row.messageIndex),
+      createdAt: Number(row.created_at),
+    }
+  })
+}
+
 /** 删除单个会话（连带消息）。返回是否确有删除 —— 他人的 uuid 一律返回 false */
 export function deleteConversation(userId: number, uuid: number): boolean {
   const db = getDb()

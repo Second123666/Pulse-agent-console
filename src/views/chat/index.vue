@@ -1,6 +1,6 @@
 <script setup lang='ts'>
 import type { Ref } from 'vue'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { NAutoComplete, NButton, NInput, useDialog, useMessage } from 'naive-ui'
@@ -13,7 +13,7 @@ import { useUsingContext } from './hooks/useUsingContext'
 import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { useChatStore, usePromptStore, useSettingStore } from '@/store'
+import { clearPendingJump, pendingJumpTarget, useChatStore, usePromptStore, useSettingStore } from '@/store'
 import type { AgentResumeCursor } from '@/api'
 import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
@@ -946,6 +946,62 @@ function speakText(text: string) {
   synth.speak(utterance)
 }
 
+// —— 9.5 会话搜索：跳转定位与高亮 ——
+
+/** 正在闪的消息下标（-1 = 没有） */
+const highlightIndex = ref(-1)
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+/** 已重试次数：目标消息可能还在水合路上（新设备首开），有限次后放弃，避免目标长期悬挂 */
+let jumpAttempts = 0
+
+function flashMessage(index: number) {
+  highlightIndex.value = index
+  if (highlightTimer)
+    clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    highlightIndex.value = -1
+  }, 2600)
+}
+
+/**
+ * 消费命令面板留下的跳转目标：滚到那条消息并闪一下。
+ *
+ * 目标在 Chat 视图挂载前后都可能被设置（取决于 setActive 的 push 与挂载谁先落地），
+ * 所以 onMounted 与两个 watch 都要调 —— 重复调用由 clearPendingJump 兜成幂等。
+ */
+async function tryJumpToPending() {
+  const target = pendingJumpTarget.value
+  if (!target || target.uuid !== +uuid)
+    return
+
+  await nextTick()
+  // 下标已校验为整数，拼进选择器无注入风险；限定在滚动容器内，避免命中面板等同名节点
+  const el = document.querySelector(`#scrollRef [data-message-index="${target.index}"]`)
+  if (!el) {
+    if (++jumpAttempts < 20) {
+      setTimeout(tryJumpToPending, 150)
+      return
+    }
+    // 重试到头（会话被删 / 下标越界）：清掉目标，免得干扰下一次搜索
+    jumpAttempts = 0
+    clearPendingJump()
+    return
+  }
+
+  jumpAttempts = 0
+  clearPendingJump()
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  flashMessage(target.index)
+}
+
+watch(pendingJumpTarget, () => {
+  tryJumpToPending()
+})
+// 服务端水合会整体替换 state.chat，目标消息到这时才出现
+watch(dataSources, () => {
+  tryJumpToPending()
+})
+
 onMounted(() => {
   scrollToBottom()
   if (inputRef.value && !isMobile.value)
@@ -955,11 +1011,15 @@ onMounted(() => {
     window.speechSynthesis.onvoiceschanged = loadVoices
     loadVoices()
   }
+
+  tryJumpToPending()
 })
 
 onUnmounted(() => {
   if (loading.value)
     controller.abort()
+  if (highlightTimer)
+    clearTimeout(highlightTimer)
 })
 </script>
 
@@ -981,6 +1041,8 @@ onUnmounted(() => {
                   :agent-steps="item.agentSteps"
                   :agent-stalled="item.agentStalled"
                   :usage="item.usage"
+                  :data-message-index="index"
+                  :highlighted="index === highlightIndex"
                   @regenerate="onRegenerate(index)" @retry="handleAgentRetry(index)" @delete="handleDelete(index)"
                   @reply="handleReply" @speak="speakText" @approve="handleApprove"
                 />

@@ -214,6 +214,29 @@ export function fetchConversationDelete<T = { deleted: boolean }>(uuid: number) 
   })
 }
 
+/** 跨会话消息检索的一条命中 */
+export interface MessageSearchHit {
+  conversationUuid: number
+  conversationTitle: string
+  role: 'user' | 'assistant'
+  /** 命中片段（已截取 + 折叠换行） */
+  snippet: string
+  /** 命中词在 snippet 中的区间，供前端高亮；start === end 表示无法定位 */
+  matchStart: number
+  matchEnd: number
+  /** 该消息在所属会话中的下标，跳转定位用 */
+  messageIndex: number
+  createdAt: number
+}
+
+/** 跨会话检索消息正文（服务端 LIKE，按 user_id 隔离） */
+export function fetchConversationSearch<T = { hits: MessageSearchHit[] }>(q: string, limit = 20) {
+  return get<T>({
+    url: '/conversation/search',
+    data: { q, limit },
+  })
+}
+
 /** 单轮模型调用的用量与耗时 */
 export interface AgentUsageStep {
   turn: number

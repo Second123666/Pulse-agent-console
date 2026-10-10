@@ -21,6 +21,8 @@ interface Props {
   agentStalled?: boolean
   /** 本轮的 token 用量与耗时（仅 Agent 模式） */
   usage?: Chat.AgentUsage
+  /** 会话搜索跳转过来时闪一下，帮用户在同屏多条消息里定位命中项 */
+  highlighted?: boolean
 }
 
 interface Emit {
@@ -143,7 +145,7 @@ async function handleCopy() {
 <template>
   <div
     ref="messageRef" class="flex w-full mb-6 overflow-hidden rounded-lg"
-    :class="[{ 'flex-row-reverse': inversion }]"
+    :class="[{ 'flex-row-reverse': inversion }, highlighted ? 'agent-message-flash' : '']"
   >
     <div
       class="flex items-center justify-center flex-shrink-0 h-8 overflow-hidden rounded-full basis-8"
@@ -206,3 +208,33 @@ async function handleCopy() {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 会话搜索跳转后的定位提示：左侧一道强调色 + 淡底，闪完自行消失（不留持久样式） */
+.agent-message-flash {
+  animation: message-flash 2.4s ease-out;
+}
+
+@keyframes message-flash {
+  0% {
+    background-color: var(--agent-accent-soft);
+    box-shadow: inset 3px 0 0 var(--agent-accent);
+  }
+  60% {
+    background-color: var(--agent-accent-soft);
+    box-shadow: inset 3px 0 0 var(--agent-accent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-message-flash {
+    animation: none;
+    background-color: var(--agent-accent-soft);
+    box-shadow: inset 3px 0 0 var(--agent-accent);
+  }
+}
+</style>
