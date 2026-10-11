@@ -1,5 +1,7 @@
 import { chatCompletion } from '../agent/openaiClient'
 import { embedTexts } from '../rag/embed'
+import type { MessageContent } from '../types'
+import { contentText } from '../utils/content'
 import { getMemory, searchMemories, upsertMemory } from './store'
 
 /**
@@ -81,13 +83,15 @@ export async function recallMemories(userId: number, query: string, k = RECALL_T
 export async function rememberConversation(params: {
   userId: number
   conversationId: number
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: Array<{ role: 'user' | 'assistant'; content: MessageContent }>
 }): Promise<boolean> {
   const { userId, conversationId, messages } = params
   if (!Number.isInteger(userId) || userId <= 0 || !Number.isInteger(conversationId) || conversationId <= 0)
     return false
 
-  const usable = messages.filter(item => typeof item.content === 'string' && item.content.trim() !== '')
+  // 取文本再判空：多模态消息（13.1）的 content 是数组，原来的 `typeof === 'string'`
+  // 会把「带文字说明的图片消息」整条丢掉，那句说明本该进摘要
+  const usable = messages.filter(item => contentText(item.content).trim() !== '')
   if (usable.length < MIN_MESSAGES_TO_SUMMARIZE)
     return false
 
@@ -102,7 +106,7 @@ export async function rememberConversation(params: {
     }
 
     const transcript = usable
-      .map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.content}`)
+      .map(item => `${item.role === 'user' ? '用户' : '助手'}：${contentText(item.content)}`)
       .join('\n')
       .slice(-SUMMARY_INPUT_MAX_CHARS)
 

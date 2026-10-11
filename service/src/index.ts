@@ -21,6 +21,7 @@ import { appendRunEvent, attachRunSink, detachRunSink, finishRun, replayRunEvent
 import { list } from './agent/registry'
 import type { AgentEvent, AgentUsage } from './agent/types'
 import { composeSystemMessage, recallMemories, rememberConversation } from './memory'
+import { contentText } from './utils/content'
 import './tools'
 import { loadMcpTools } from './mcp'
 
@@ -180,7 +181,8 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
 
     // 长期记忆召回：按本轮提问做语义检索，把相关历史摘要拼进 system message。
     // 召回失败 / 无 embedding 时返回空数组，systemMessage 原样透传 —— 绝不影响对话本身
-    const memories = hasUser ? await recallMemories(userId, prompt) : []
+    // prompt 现在可能是多模态分片数组（13.1），语义检索只认文本，先取出 text 部分
+    const memories = hasUser ? await recallMemories(userId, contentText(prompt)) : []
     const effectiveSystemMessage = composeSystemMessage(systemMessage, memories)
     if (memories.length > 0)
       globalThis.console.log(`[memory] 已注入 ${memories.length} 条历史记忆`) // 便于验证召回是否真的生效

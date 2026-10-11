@@ -1,10 +1,12 @@
+import type { MessageContent } from '../types'
 import { agentConfig } from '../utils/config'
 import { isNotEmptyString } from '../utils/is'
 
 /** OpenAI Chat Completions 线协议中的消息（含工具调用） */
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  /** 13.1 放开为 `string | ContentPart[]`：图片走 image_url 分片；string 仍是绝大多数消息的形态 */
+  content: MessageContent | null
   tool_call_id?: string
   tool_calls?: OpenAIToolCall[]
 }
@@ -118,6 +120,8 @@ interface StreamChunk {
 
 /** 组装请求体，流式与非流式共用（stream 为 true 时带上 stream 字段） */
 function buildPayload(options: ChatCompletionOptions, model: string, stream: boolean): Record<string, unknown> {
+  // messages 整体原样透传：content 是 string 还是分片数组，上游线协议两者都认，
+  // 这里不做任何转换 —— 13.1 放开 content 类型时这一段一行没动就是它没被破坏的证据
   const payload: Record<string, unknown> = {
     model,
     messages: options.messages,

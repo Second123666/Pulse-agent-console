@@ -161,6 +161,28 @@ describe('rememberConversation', () => {
     expect(completionMock).not.toHaveBeenCalled()
   })
 
+  it('多模态消息：带文字的计入条数并把文字写进摘要，纯图片的不计入（13.1）', async () => {
+    completionMock.mockResolvedValue({ content: '摘要', toolCalls: [], finishReason: 'stop' })
+    embedMock.mockResolvedValue([[1, 0]])
+
+    const withImage = [
+      ...messages(5),
+      { role: 'user' as const, content: [{ type: 'text' as const, text: '这张图是架构图' }] },
+    ]
+    await expect(rememberConversation({ userId: 1, conversationId: 10, messages: withImage })).resolves.toBe(true)
+    const transcript = completionMock.mock.calls[0][0].messages.map(m => String(m.content)).join(' ')
+    expect(transcript).toContain('这张图是架构图')
+
+    // 纯图片（没有一个字）不该被算成一条有效消息
+    completionMock.mockClear()
+    const imageOnly = [
+      ...messages(5),
+      { role: 'user' as const, content: [{ type: 'image_url' as const, image_url: { url: 'data:image/png;base64,AAAA' } }] },
+    ]
+    await expect(rememberConversation({ userId: 1, conversationId: 11, messages: imageOnly })).resolves.toBe(false)
+    expect(completionMock).not.toHaveBeenCalled()
+  })
+
   it('userId / conversationId 非法时直接返回 false', async () => {
     await expect(rememberConversation({ userId: 0, conversationId: 10, messages: messages(6) })).resolves.toBe(false)
     await expect(rememberConversation({ userId: 1, conversationId: 0, messages: messages(6) })).resolves.toBe(false)

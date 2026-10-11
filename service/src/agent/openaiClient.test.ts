@@ -206,3 +206,50 @@ describe('chatCompletionStream', () => {
       .toMatchObject({ name: 'OpenAIError', status: 0, message: 'Chat completions request timed out' })
   })
 })
+
+describe('content 类型放开（13.1）', () => {
+  /** 打一次流式请求，返回上游实际收到的 messages（直接读 fetch 的请求体，不猜） */
+  async function sentMessages(messages: any[]): Promise<any[]> {
+    const fetchMock = stubFetch([deltaFrame({ content: 'ok' }, 'stop'), 'data: [DONE]\n\n'])
+    await chatCompletionStream({ messages })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    return body.messages
+  }
+
+  const IMAGE_PART = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }
+
+  it('纯字符串 content 原样透传（老格式回归保护）', async () => {
+    const sent = await sentMessages([{ role: 'user', content: '你好' }])
+    expect(sent).toEqual([{ role: 'user', content: '你好' }])
+    expect(typeof sent[0].content).toBe('string')
+  })
+
+  it('数组 content 原样透传，不会被包成字符串或丢掉图片', async () => {
+    const parts = [{ type: 'text', text: '这张图是什么' }, IMAGE_PART]
+    const sent = await sentMessages([{ role: 'user', content: parts }])
+    expect(sent[0].content).toEqual(parts)
+    expect(Array.isArray(sent[0].content)).toBe(true)
+    expect(sent[0].content[1].image_url.url).toBe(IMAGE_PART.image_url.url)
+  })
+
+  it('混合历史（部分 string 部分数组）一次发出去，两种形态互不干扰', async () => {
+    const sent = await sentMessages([
+      { role: 'system', content: '你是助手' },
+      { role: 'user', content: '第一句' },
+      { role: 'assistant', content: '好的' },
+      { role: 'user', content: [{ type: 'text', text: '看这张' }, IMAGE_PART] },
+    ])
+    expect(sent).toHaveLength(4)
+    expect(sent.map(m => Array.isArray(m.content))).toEqual([false, false, false, true])
+    expect(sent[1].content).toBe('第一句')
+    expect(sent[3].content[0]).toEqual({ type: 'text', text: '看这张' })
+  })
+
+  it('content 为 null 时照旧发 null（工具消息走的就是这条）', async () => {
+    const sent = await sentMessages([
+      { role: 'user', content: '查一下' },
+      { role: 'tool', content: null, tool_call_id: 'call_0' },
+    ])
+    expect(sent[1].content).toBeNull()
+  })
+})

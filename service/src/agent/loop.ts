@@ -1,4 +1,5 @@
 import { agentConfig } from '../utils/config'
+import { contentImageCount, contentText } from '../utils/content'
 import { APPROVAL_DENIED_MESSAGE } from './approvals'
 import type { ChatCompletionResult, OpenAIMessage, OpenAITool, OpenAIToolChoice } from './openaiClient'
 import { chatCompletionStream } from './openaiClient'
@@ -11,6 +12,12 @@ const BREAKER_PROMPT = '你已达到最大步数或 Token 预算上限。请立�
 const CJK_TOKEN_RATIO = 1
 /** token 估算系数：非 CJK 字符约 4 字符 ≈ 1 token */
 const NON_CJK_TOKEN_RATIO = 1 / 4
+/**
+ * 单张图片的 token 粗估值。上游按分辨率计费（常见 765~1105 之间），这里取 1000。
+ * **不能拿 base64 长度当 token 数**：一张 1MB 的图 base64 后是百万级字符，
+ * 那样估算会让预算熔断在第一轮就误触发，多模态对话直接被自己掐断。
+ */
+const IMAGE_TOKEN_ESTIMATE = 1000
 
 /** 粗略判断 CJK 字符（CJK 统一表意 + 日文假名 + 谚文） */
 function isCjk(char: string): boolean {
@@ -60,13 +67,18 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
   const estimateTokens = (): number =>
     messages.reduce(
       (sum, m) => {
-        const text = (m.content ?? '') + (m.tool_calls ? JSON.stringify(m.tool_calls) : '')
+        // content 可能是分片数组（13.1）：只数文本部分，图片按固定值估。
+        // 不能拿数组本身当字符串拼 —— 那会得到一串 "[object Object]"，预算直接算错
+        const text = contentText(m.content ?? '') + (m.tool_calls ? JSON.stringify(m.tool_calls) : '')
         let cjk = 0
         for (const char of text) {
           if (isCjk(char))
             cjk++
         }
-        return sum + cjk * CJK_TOKEN_RATIO + (text.length - cjk) * NON_CJK_TOKEN_RATIO
+        return sum
+          + cjk * CJK_TOKEN_RATIO
+          + (text.length - cjk) * NON_CJK_TOKEN_RATIO
+          + contentImageCount(m.content ?? '') * IMAGE_TOKEN_ESTIMATE
       },
       0,
     )

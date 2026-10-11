@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import * as dotenv from 'dotenv'
 import { sendResponse } from '../utils'
+import { contentChars, contentText } from '../utils/content'
 import { isNotEmptyString } from '../utils/is'
-import type { ApiModel, ChatContext, ModelConfig } from '../types'
+import type { ApiModel, ChatContext, MessageContent, ModelConfig } from '../types'
 import type { ChatMessage, RequestOptions } from './types'
 
 dotenv.config()
@@ -33,7 +34,8 @@ const apiModel: ApiModel = 'OpenAICompatible'
 interface MessageRecord {
   id: string
   role: 'user' | 'assistant'
-  content: string
+  /** 13.1 起允许是多模态分片数组（user 消息）；assistant 消息恒为字符串，见 chatReplyProcess 里的 assistantText */
+  content: MessageContent
   parentMessageId?: string
   conversationId?: string
 }
@@ -41,7 +43,7 @@ interface MessageRecord {
 const messageStore = new Map<string, MessageRecord>()
 
 // 沿 parentMessageId 向上回溯取最近的对话历史，按条数和字符数截断以适配模型上下文
-function buildHistory(parentMessageId?: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+function buildHistory(parentMessageId?: string): Array<{ role: 'user' | 'assistant'; content: MessageContent }> {
   const chain: MessageRecord[] = []
   let currentId = parentMessageId
   while (currentId && messageStore.has(currentId)) {
@@ -53,7 +55,9 @@ function buildHistory(parentMessageId?: string): Array<{ role: 'user' | 'assista
   const MAX_MESSAGES = 20
   const MAX_CHARS = 12000
   const recent = chain.slice(-MAX_MESSAGES)
-  while (recent.length > 1 && recent.reduce((sum, m) => sum + m.content.length, 0) > MAX_CHARS)
+  // 用 contentChars 而非 content.length：多模态消息的 .length 是分片个数（1 或 2），
+  // 拿它当字符数会让一张 1MB 的图只算 1 字，历史永远裁不掉
+  while (recent.length > 1 && recent.reduce((sum, m) => sum + contentChars(m.content), 0) > MAX_CHARS)
     recent.shift()
 
   return recent.map(({ role, content }) => ({ role, content }))
@@ -74,14 +78,18 @@ async function chatReplyProcess(options: RequestOptions) {
     messageStore.set(userMessage.id, userMessage)
 
     const assistantMessage: MessageRecord = { id: randomUUID(), role: 'assistant', content: '', parentMessageId: userMessage.id, conversationId }
+    // 回复文本用局部变量累加，再写回 assistantMessage.content。
+    // MessageRecord.content 放宽成 MessageContent 是为了存 user 侧的多模态消息，
+    // 而 `union += string` 在类型上过不去 —— 助手这条恒为纯文本，用局部 string 才是实话
+    let assistantText = ''
 
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: MessageContent }> = []
     if (isNotEmptyString(systemMessage))
       messages.push({ role: 'system', content: systemMessage })
     messages.push(...buildHistory(parentMessageId), { role: 'user', content: message })
 
     if (!disableDebug)
-      global.console.log(`[API] model: ${model} | messages: ${messages.length} | prompt: ${message.slice(0, 50)}`)
+      global.console.log(`[API] model: ${model} | messages: ${messages.length} | prompt: ${contentText(message).slice(0, 50)}`)
 
     const controller = new AbortController()
     const timer = setTimeout(() => {
@@ -128,7 +136,7 @@ async function chatReplyProcess(options: RequestOptions) {
     const emit = () => {
       process?.({
         id: assistantMessage.id,
-        text: assistantMessage.content,
+        text: assistantText,
         conversationId,
         detail: { choices: [{ finish_reason: finishReason }] },
       } as ChatMessage)
@@ -156,7 +164,8 @@ async function chatReplyProcess(options: RequestOptions) {
             if (data.choices?.[0]?.finish_reason)
               finishReason = data.choices[0].finish_reason
             if (deltaContent) {
-              assistantMessage.content += deltaContent
+              assistantText += deltaContent
+              assistantMessage.content = assistantText
               emit()
             }
           }
@@ -173,7 +182,7 @@ async function chatReplyProcess(options: RequestOptions) {
 
     messageStore.set(assistantMessage.id, assistantMessage)
     emit()
-    return sendResponse({ type: 'Success', data: { id: assistantMessage.id, text: assistantMessage.content, conversationId } })
+    return sendResponse({ type: 'Success', data: { id: assistantMessage.id, text: assistantText, conversationId } })
   }
   catch (error: any) {
     // 客户端主动中止（用户点停止 / 关页面）：原样上抛，由调用方按 error.name 静默处理。

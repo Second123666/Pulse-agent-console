@@ -1,3 +1,4 @@
+import type { MessageContent } from '../types'
 import type { OpenAIToolCall } from './openaiClient'
 
 /** 单轮模型调用的用量与耗时 */
@@ -74,8 +75,8 @@ export interface Tool {
 
 /** 一次 Agent 运行的输入参数 */
 export interface AgentRunOptions {
-  /** 对话历史（不含本轮 user 消息之外的辅助消息） */
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  /** 对话历史（不含本轮 user 消息之外的辅助消息）。content 允许多模态分片，见 13.1 */
+  messages: Array<{ role: 'user' | 'assistant'; content: MessageContent }>
   /** 可用工具，缺省为空（纯问答） */
   tools?: Tool[]
   /** 每产生一个事件立即回调（SSE 推送用） */

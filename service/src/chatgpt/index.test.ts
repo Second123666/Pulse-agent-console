@@ -89,3 +89,41 @@ describe('chatReplyProcess', () => {
     expect(result.data.text).toBe('你好')
   })
 })
+
+describe('content 类型放开（13.1）', () => {
+  const SSE = 'data: {"choices":[{"delta":{"content":"看"}}]}\ndata: [DONE]\n\n'
+  const IMAGE_PART = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }
+
+  /** 打一次请求，返回 [上游收到的 messages, chatReplyProcess 的返回值] */
+  async function send(message: any) {
+    const chatReplyProcess = await loadChatReplyProcess('100000')
+    // 请求体在 mock 里当场记下来，不去索引 mock.calls 的元组（零参 vi.fn 的 calls 是空元组，取下标过不了类型检查）
+    let requestBody = ''
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body?: unknown }) => {
+      requestBody = String(init.body)
+      return new Response(SSE, { status: 200 })
+    }))
+    const result: any = await chatReplyProcess({ message })
+    return [JSON.parse(requestBody).messages, result] as const
+  }
+
+  it('老格式（字符串 prompt）在请求体里仍是字符串，不被包装', async () => {
+    const [messages, result] = await send('你好')
+    const last = messages.at(-1)
+    expect(last.role).toBe('user')
+    expect(typeof last.content).toBe('string')
+    expect(last.content).toBe('你好')
+    expect(result.status).toBe('Success')
+    expect(result.data.text).toBe('看')
+  })
+
+  it('数组 prompt 原样发给上游，回复链路与纯文本一致', async () => {
+    const parts = [{ type: 'text', text: '这张图里是什么' }, IMAGE_PART]
+    const [messages, result] = await send(parts)
+    const last = messages.at(-1)
+    expect(Array.isArray(last.content)).toBe(true)
+    expect(last.content).toEqual(parts)
+    expect(result.status).toBe('Success')
+    expect(result.data.text).toBe('看')
+  })
+})

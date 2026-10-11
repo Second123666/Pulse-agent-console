@@ -538,3 +538,64 @@ describe('用量统计（9.4）', () => {
     expect(usage?.steps).toHaveLength(1)
   })
 })
+
+describe('多模态 content 透传与预算估算（13.1）', () => {
+  const IMAGE_PART = { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,AAAA' } }
+  const TEXT_PART = { type: 'text' as const, text: '看这张图' }
+
+  /** 第一次调模型时收到的 messages —— 断言「模型那边看到了什么」，不猜中间过程 */
+  function sentMessages(): any[] {
+    return mockChatCompletionStream.mock.calls[0][0].messages
+  }
+
+  it('混合历史（string + 数组）不报错，且两种形态原样到达模型', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('看到了')))
+    const parts = [TEXT_PART, IMAGE_PART]
+
+    const events: AgentEvent[] = []
+    await runAgent({
+      messages: [
+        { role: 'user', content: '先问一句' },
+        { role: 'assistant', content: '答过了' },
+        { role: 'user', content: parts },
+      ],
+      onEvent: e => events.push(e),
+    })
+
+    expect(events.at(-1)?.type).toBe('answer')
+    const sent = sentMessages()
+    expect(sent).toHaveLength(3)
+    expect(sent[0].content).toBe('先问一句')
+    expect(sent[1].content).toBe('答过了')
+    expect(sent[2].content).toEqual(parts)
+  })
+
+  it('大图不按 base64 长度计 token —— 否则第一轮就被自己的预算熔断掐掉', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('看到了')))
+    const hugeImage = {
+      type: 'image_url' as const,
+      image_url: { url: `data:image/png;base64,${'A'.repeat(200000)}` },
+    }
+
+    await runAgent({
+      messages: [{ role: 'user', content: [{ type: 'text', text: '看图' }, hugeImage] }],
+      // 200000 字符的 base64 远超这个预算，而按固定值估的图片 token 是 1000 —— 预算应当够用
+      tokenBudget: 100000,
+      onEvent: () => {},
+    })
+
+    expect(sentMessages().some(m => String(m.content).includes('因预算'))).toBe(false)
+  })
+
+  it('图片也不是免费的：预算给得极小时照样熔断（不是把图片当 0 忽略）', async () => {
+    mockChatCompletionStream.mockImplementationOnce(asStream(textResult('看到了')))
+
+    await runAgent({
+      messages: [{ role: 'user', content: [{ type: 'text' as const, text: '看图' }, IMAGE_PART] }],
+      tokenBudget: 5,
+      onEvent: () => {},
+    })
+
+    expect(sentMessages().some(m => String(m.content).includes('因预算'))).toBe(true)
+  })
+})
