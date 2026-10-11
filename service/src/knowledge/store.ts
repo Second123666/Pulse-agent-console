@@ -103,6 +103,33 @@ export function listDocuments(userId: number): KnowledgeDoc[] {
   return rows.map(toDoc)
 }
 
+/** 带索引状态的文档：`indexed` 表示登记的块数与实际向量块数一致 */
+export interface KnowledgeDocStatus extends KnowledgeDoc {
+  vectorChunks: number
+  indexed: boolean
+}
+
+/**
+ * 文档列表 + 索引状态。
+ *
+ * 索引状态的存在理由：向量写入与元信息登记是两步，中间失败或 reindex 中途挂掉时
+ * 两者会不一致 —— 列表里看得出来，用户才不会以为「传上去了就一定能检索到」。
+ */
+export async function listDocumentsWithStatus(userId: number): Promise<KnowledgeDocStatus[]> {
+  const docs = listDocuments(userId)
+  if (docs.length === 0)
+    return []
+
+  const counts = new Map<string, number>()
+  for (const record of await all(userId))
+    counts.set(record.docId, (counts.get(record.docId) ?? 0) + 1)
+
+  return docs.map((doc) => {
+    const vectorChunks = counts.get(doc.docId) ?? 0
+    return { ...doc, vectorChunks, indexed: vectorChunks === doc.chunks }
+  })
+}
+
 /** 单个文档的元信息；不属于该用户时返回 null */
 export function getDocument(userId: number, docId: string): KnowledgeDoc | null {
   const row = getDb()

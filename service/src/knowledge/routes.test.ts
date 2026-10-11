@@ -18,6 +18,7 @@ const { authRouter } = await import('../auth/routes')
 const { getDb } = await import('../store/db')
 const { all, clear } = await import('../rag/store')
 const { MAX_UPLOAD_BYTES, ingestDocument } = await import('./store')
+const { ragSearch } = await import('../tools/ragSearch')
 
 let server: Server
 let base: string
@@ -213,5 +214,151 @@ describe('POST /knowledge/upload', () => {
   it('未登录返回 401', async () => {
     const result = await upload(null, 'doc.md', '内容')
     expect(result.status).toBe(401)
+  })
+})
+
+async function listDocs(token: string | null) {
+  const response = await fetch(`${base}/knowledge/list`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  })
+  return { status: response.status, body: await response.json() as any }
+}
+
+async function remove(token: string | null, docId: string) {
+  const response = await fetch(`${base}/knowledge/${docId}`, {
+    method: 'DELETE',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  })
+  return { status: response.status, body: await response.json() as any }
+}
+
+async function reindex(token: string | null, docId: string) {
+  const response = await fetch(`${base}/knowledge/reindex`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ docId }),
+  })
+  return { status: response.status, body: await response.json() as any }
+}
+
+describe('知识库管理 API（12.3）', () => {
+  beforeEach(() => {
+    mockEmbedTexts.mockImplementation(async (texts: string[]) => texts.map(() => [1, 0, 0]))
+  })
+
+  it('列表只返回自己的文档，并带索引状态', async () => {
+    const a = await register('owner-a')
+    const b = await register('owner-b')
+    await upload(a.token, 'mine.md', '甲的文档内容')
+    await upload(b.token, 'theirs.md', '乙的文档内容')
+
+    const ra = await listDocs(a.token)
+    expect(ra.status).toBe(200)
+    expect(ra.body.data.docs).toHaveLength(1)
+    expect(ra.body.data.docs[0].name).toBe('mine.md')
+    expect(ra.body.data.docs[0].indexed).toBe(true)
+    expect(ra.body.data.docs[0].vectorChunks).toBe(ra.body.data.docs[0].chunks)
+
+    const rb = await listDocs(b.token)
+    expect(rb.body.data.docs).toHaveLength(1)
+    expect(rb.body.data.docs[0].name).toBe('theirs.md')
+  })
+
+  it('索引状态能反映块数不一致（向量缺失）', async () => {
+    const { token, userId } = await register('stale-check')
+    await upload(token, 'doc.md', '用于验证索引状态的内容')
+    // 模拟「元信息登记了、向量却没了」—— 中途失败的另一半
+    const { remove: removeVectors } = await import('../rag/store')
+    await removeVectors(record => record.userId === userId)
+
+    const list = await listDocs(token)
+    expect(list.body.data.docs[0].indexed).toBe(false)
+    expect(list.body.data.docs[0].vectorChunks).toBe(0)
+  })
+
+  it('无 token 访问 /knowledge/list 返回 401', async () => {
+    const result = await listDocs(null)
+    expect(result.status).toBe(401)
+  })
+
+  it('删除自己的文档后检索不再命中，列表也清空', async () => {
+    const { token, userId } = await register('deleter')
+    const up = await upload(token, 'gone.md', '这段文档里藏着代号 FALCON-3000')
+    const docId = up.body.data.doc.docId
+
+    expect(await ragSearch.handler({ query: 'FALCON' }, { userId })).toContain('FALCON')
+
+    const removed = await remove(token, docId)
+    expect(removed.status).toBe(200)
+    expect(removed.body.data.removedChunks).toBeGreaterThan(0)
+
+    expect(await ragSearch.handler({ query: 'FALCON' }, { userId })).not.toContain('FALCON')
+    expect((await listDocs(token)).body.data.docs).toHaveLength(0)
+    expect(await all(userId)).toHaveLength(0)
+  })
+
+  it('删除他人文档返回 404 且不动对方数据', async () => {
+    const victim = await register('victim')
+    const attacker = await register('attacker')
+    const up = await upload(victim.token, 'secret.md', '被害者的文档内容')
+    const docId = up.body.data.doc.docId
+
+    const result = await remove(attacker.token, docId)
+    expect(result.status).toBe(404)
+
+    // 对方的元信息与向量块都完好无损
+    expect((await listDocs(victim.token)).body.data.docs).toHaveLength(1)
+    expect(await all(victim.userId)).toHaveLength(1)
+  })
+
+  it('docId 格式非法一律 400，不进查询', async () => {
+    const { token } = await register('bad-id')
+    expect((await remove(token, 'short')).status).toBe(400)
+    // 17 位（非固定 16 位）
+    expect((await remove(token, 'DEADBEEFDEADBEEFX')).status).toBe(400)
+    expect((await remove(token, 'has space here')).status).toBe(400)
+    expect((await reindex(token, 'not-hex')).status).toBe(400)
+    // 合法但不存在 → 404（不区分「存在但不是你的」）
+    expect((await remove(token, 'deadbeefdeadbeef')).status).toBe(404)
+  })
+
+  it('reindex 后块 id 稳定、向量被替换', async () => {
+    const { token, userId } = await register('reindexer')
+    // 单个分段也要切块：chunkText 的窗口是 500 字，这里造 10 + 4×200 = 810 字
+    // （第一次写成 ×120 = 490 字，恰好不超窗，只切出一块 —— 断言 isGreaterThanOrEqual(2) 就挂了）
+    const up = await upload(token, 'doc.md', `重建索引用的长文档。${'内容句。'.repeat(200)}`)
+    const docId = up.body.data.doc.docId
+    const idsBefore = (await all(userId)).filter(r => r.docId === docId).map(r => r.id).sort()
+    expect(idsBefore.length).toBeGreaterThanOrEqual(2)
+
+    mockEmbedTexts.mockImplementation(async (texts: string[]) => texts.map(() => [0, 1, 0]))
+    const result = await reindex(token, docId)
+    expect(result.status).toBe(200)
+    expect(result.body.data.chunks).toBe(idsBefore.length)
+
+    const records = (await all(userId)).filter(r => r.docId === docId)
+    expect(records.map(r => r.id).sort()).toEqual(idsBefore)
+    expect(records.every(r => r.vector[0] === 0 && r.vector[1] === 1)).toBe(true)
+  })
+
+  it('reindex 别人的文档返回 404', async () => {
+    const victim = await register('victim2')
+    const attacker = await register('attacker2')
+    const up = await upload(victim.token, 'v.md', '受害者的内容')
+    expect((await reindex(attacker.token, up.body.data.doc.docId)).status).toBe(404)
+  })
+
+  it('reindex 未登录返回 401', async () => {
+    expect((await reindex(null, 'deadbeefdeadbeef')).status).toBe(401)
+  })
+
+  it('embedding 失败时 reindex 回 400 且说明原因', async () => {
+    const { token } = await register('reindex-fail')
+    const up = await upload(token, 'doc.md', '文档内容')
+    mockEmbedTexts.mockRejectedValue(new Error('EMBEDDING_API_KEY 未配置'))
+
+    const result = await reindex(token, up.body.data.doc.docId)
+    expect(result.status).toBe(400)
+    expect(result.body.message).toContain('重新向量化失败')
   })
 })

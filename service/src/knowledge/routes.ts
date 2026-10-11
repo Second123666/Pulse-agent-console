@@ -1,7 +1,10 @@
 import type { Request, Response } from 'express'
 import express from 'express'
 import { requireAuth } from '../middleware/auth'
-import { KnowledgeUploadError, MAX_UPLOAD_BYTES, ingestDocument } from './store'
+import { KnowledgeUploadError, MAX_UPLOAD_BYTES, deleteDocument, ingestDocument, listDocumentsWithStatus, reindexDocument } from './store'
+
+/** docId 是本模块生成的 16 位十六进制；显式校验，防止奇怪的路径参数进到查询里 */
+const DOC_ID_PATTERN = /^[0-9a-f]{16}$/i
 
 export const knowledgeRouter = express.Router()
 
@@ -81,5 +84,78 @@ knowledgeRouter.post('/knowledge/upload', async (req, res) => {
     if (error instanceof KnowledgeUploadError)
       return fail(res, 400, error.message)
     fail(res, 500, error?.message ?? '上传失败')
+  }
+})
+
+/**
+ * 文档列表：`GET /knowledge/list`，带索引状态（登记块数 vs 实际向量块数）。
+ *
+ * 全部按 `userId` 过滤 —— 与 `conversation/routes.ts` 的多租户约定一致：
+ * 会话是靠 JOIN 隔离，这里靠 `VectorRecord.userId` 与 `knowledge_docs.user_id`。
+ */
+knowledgeRouter.get('/knowledge/list', async (req, res) => {
+  const userId = currentUserId(req, res)
+  if (userId === null)
+    return
+
+  try {
+    const docs = await listDocumentsWithStatus(userId)
+    res.json({ status: 'Success', message: '', data: { docs } })
+  }
+  catch (error: any) {
+    fail(res, 500, error?.message ?? '列表获取失败')
+  }
+})
+
+/**
+ * 删除文档：`DELETE /knowledge/:docId`。
+ *
+ * 删除条件是 **`user_id` + `doc_id` 双条件** —— 只按 docId 删的话，猜到别人的
+ * docId 就能删别人的文档。deleteDocument 内部已经带了双条件，这里再校验一次 id 格式。
+ * 他人文档 / 不存在一律回 404（**不区分**，避免暴露「这个 id 存在但不是你的」）。
+ */
+knowledgeRouter.delete('/knowledge/:docId', async (req, res) => {
+  const userId = currentUserId(req, res)
+  if (userId === null)
+    return
+
+  const docId = String(req.params.docId ?? '')
+  if (!DOC_ID_PATTERN.test(docId))
+    return fail(res, 400, '文档 id 非法')
+
+  try {
+    const result = await deleteDocument(userId, docId)
+    if (!result)
+      return fail(res, 404, '文档不存在')
+    res.json({ status: 'Success', message: '', data: result })
+  }
+  catch (error: any) {
+    fail(res, 500, error?.message ?? '删除失败')
+  }
+})
+
+/**
+ * 重建索引：`POST /knowledge/reindex`，body `{ docId }`。
+ * 用于 embedding 配置变更后把已有文档重新向量化。
+ */
+knowledgeRouter.post('/knowledge/reindex', async (req, res) => {
+  const userId = currentUserId(req, res)
+  if (userId === null)
+    return
+
+  const { docId } = req.body ?? {}
+  if (typeof docId !== 'string' || !DOC_ID_PATTERN.test(docId))
+    return fail(res, 400, '文档 id 非法')
+
+  try {
+    const result = await reindexDocument(userId, docId)
+    if (!result)
+      return fail(res, 404, '文档不存在')
+    res.json({ status: 'Success', message: '', data: result })
+  }
+  catch (error: any) {
+    if (error instanceof KnowledgeUploadError)
+      return fail(res, 400, error.message)
+    fail(res, 500, error?.message ?? '重建失败')
   }
 })
