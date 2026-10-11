@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, nextTick } from 'vue'
-import { NSwitch } from 'naive-ui'
+import { NDropdown, NSwitch } from 'naive-ui'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useAppStore, useChatStore, useSettingStore } from '@/store'
 
@@ -9,6 +9,7 @@ interface Props {
 }
 
 interface Emit {
+  (ev: 'export', format: 'markdown' | 'plain'): void
   (ev: 'handleClear'): void
 }
 
@@ -31,6 +32,17 @@ function onScrollToTop() {
   const scrollRef = document.querySelector('#scrollRef')
   if (scrollRef)
     nextTick(() => scrollRef.scrollTop = 0)
+}
+
+/** 导出格式选项（与桌面端一致；文案硬编码，不新增 i18n 键） */
+const exportOptions = [
+  { label: 'Markdown', key: 'markdown' },
+  { label: '纯文本', key: 'plain' },
+]
+
+/** 导出交给 Chat 视图做 —— 只有那里有 dataSources 与路由 uuid */
+function handleExport(key: string | number) {
+  emit('export', key === 'plain' ? 'plain' : 'markdown')
 }
 
 function handleClear() {
@@ -67,6 +79,15 @@ function handleAgentModeChange(value: boolean) {
           <span class="text-xs text-[#4f555e] dark:text-neutral-400">Agent</span>
           <NSwitch size="small" :value="settingStore.agentMode" @update:value="handleAgentModeChange" />
         </div>
+        <NDropdown :options="exportOptions" trigger="click" @select="handleExport">
+          <span class="inline-flex">
+            <HoverButton>
+              <span class="text-xl text-[#4f555e] dark:text-white">
+                <SvgIcon icon="ri:download-2-line" />
+              </span>
+            </HoverButton>
+          </span>
+        </NDropdown>
         <HoverButton @click="handleClear">
           <span class="text-xl text-[#4f555e] dark:text-white">
             <SvgIcon icon="ri:delete-bin-line" />

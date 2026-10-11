@@ -3,7 +3,7 @@ import type { Ref } from 'vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { NAutoComplete, NButton, NInput, useDialog, useMessage } from 'naive-ui'
+import { NAutoComplete, NButton, NDropdown, NInput, useDialog, useMessage } from 'naive-ui'
 import { Message } from './components'
 import EmptyState from './components/EmptyState/index.vue'
 import { useScroll } from './hooks/useScroll'
@@ -16,6 +16,7 @@ import { clearPendingJump, pendingJumpTarget, useChatStore, usePromptStore, useS
 import type { AgentResumeCursor } from '@/api'
 import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
+import { buildExportFileName, downloadText, toMarkdown, toPlainText } from '@/utils/export'
 
 let controller = new AbortController()
 
@@ -755,6 +756,36 @@ function handleEnter(event: KeyboardEvent) {
   }
 }
 
+/**
+ * 导出格式选项。文案与页脚其它 tooltip 一样是硬编码中文，**不新增 i18n 键**
+ * —— Markdown 是专有名词，纯文本也没有更值得翻译的说法。
+ */
+const exportOptions = [
+  { label: 'Markdown', key: 'markdown' },
+  { label: '纯文本', key: 'plain' },
+]
+
+/**
+ * 导出当前会话为文件。
+ *
+ * 标题按**路由里的 uuid** 反查，而不是走 `getChatHistoryByCurrentActive` ——
+ * 后者认的是 store 的 `active`，与当前路由可能短暂不一致，会导致「导出的是这个会话、
+ * 标题却是另一个」。这里与 `dataSources` 用同一个 uuid，保证标题与正文必然同源。
+ */
+function handleExport(key: string | number) {
+  // NDropdown 的 select 回调给的是 string | number，这里窄化成两种格式
+  const format = key === 'plain' ? 'plain' : 'markdown'
+  const title = chatStore.history.find(item => item.uuid === +uuid)?.title ?? ''
+  const conversation = { title, messages: dataSources.value }
+
+  if (format === 'markdown')
+    downloadText(toMarkdown(conversation), buildExportFileName(title, 'md'))
+  else
+    downloadText(toPlainText(conversation), buildExportFileName(title, 'txt'))
+
+  ms.success(t('common.exportSuccess'))
+}
+
 function handleStop() {
   if (loading.value) {
     controller.abort()
@@ -986,7 +1017,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col w-full h-full">
-    <HeaderComponent v-if="isMobile" :using-context="usingContext" @handle-clear="handleClear" />
+    <HeaderComponent v-if="isMobile" :using-context="usingContext" @export="handleExport" @handle-clear="handleClear" />
     <main class="flex-1 overflow-hidden">
       <div id="scrollRef" ref="scrollRef" class="h-full overflow-hidden overflow-y-auto">
         <div class="w-full max-w-screen-xl m-auto dark:bg-[#101014]" :class="[isMobile ? 'p-2' : 'p-4']">
@@ -1029,6 +1060,16 @@ onUnmounted(() => {
               <SvgIcon icon="ri:delete-bin-line" />
             </span>
           </HoverButton>
+          <!-- 导出会话：Markdown / 纯文本二选一（替代 10.1 删掉的截图导出） -->
+          <NDropdown v-if="!isMobile" :options="exportOptions" trigger="click" @select="handleExport">
+            <span class="inline-flex">
+              <HoverButton :tooltip="t('common.download')" placement="top">
+                <span class="text-xl text-[#4f555e] dark:text-white">
+                  <SvgIcon icon="ri:download-2-line" />
+                </span>
+              </HoverButton>
+            </span>
+          </NDropdown>
           <HoverButton :tooltip="settingStore.agentMode ? 'Agent 模式：开（模型可自主调用工具）' : 'Agent 模式：关（纯对话）'" placement="top" @click="toggleAgentMode">
             <span class="text-xl" :class="{ 'text-[#0D9488]': settingStore.agentMode, 'text-[#4f555e] dark:text-white': !settingStore.agentMode }">
               <SvgIcon icon="ri:robot-2-line" />
