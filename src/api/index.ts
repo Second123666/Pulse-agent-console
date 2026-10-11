@@ -1,5 +1,5 @@
 import type { GenericAbortSignal } from 'axios'
-import { get, post } from '@/utils/request'
+import { del, get, post } from '@/utils/request'
 import { useAuthStore, useSettingStore } from '@/store'
 
 export function fetchChatAPI<T = any>(
@@ -443,5 +443,46 @@ export function fetchUsageSummary<T = UsageSummary>(days = 30) {
   return get<T>({
     url: '/usage/summary',
     data: { days },
+  })
+}
+
+/** 知识库文档的列表项（与后端 `KnowledgeDocStatus` 对应） */
+export interface KnowledgeDoc {
+  docId: string
+  name: string
+  /** 登记的块数 */
+  chunks: number
+  /** 原文字符数 */
+  chars: number
+  createdAt: number
+  /** 实际写入的向量块数；与 `chunks` 不等说明索引半途失败、需要重建 */
+  vectorChunks: number
+  /** `chunks === vectorChunks`，界面据此显示索引是否正常 */
+  indexed: boolean
+}
+
+/**
+ * 上传文档。**正文以 base64 传输**（`contentBase64`），而不是走 multipart ——
+ * 后端复用已有的 JSON body 上限，前端也不需要引上传相关依赖。
+ */
+export function uploadKnowledge<T = { doc: KnowledgeDoc }>(name: string, contentBase64: string) {
+  return post<T>({
+    url: '/knowledge/upload',
+    data: { name, contentBase64 },
+  })
+}
+
+export function fetchKnowledgeList<T = { docs: KnowledgeDoc[] }>() {
+  return get<T>({ url: '/knowledge/list' })
+}
+
+export function deleteKnowledge<T = { removedChunks: number }>(docId: string) {
+  return del<T>({ url: `/knowledge/${docId}` })
+}
+
+export function reindexKnowledge<T = { chunks: number }>(docId: string) {
+  return post<T>({
+    url: '/knowledge/reindex',
+    data: { docId },
   })
 }

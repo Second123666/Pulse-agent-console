@@ -54,6 +54,10 @@ function http<T = any>(
 
   const params = Object.assign(typeof data === 'function' ? data() : data ?? {}, {})
 
+  // DELETE 与 GET 一样没有 body，参数走 axios 的 `data` 字段
+  if (method === 'DELETE')
+    return request.delete(url, { data: params, signal }).then(successHandler, failHandler)
+
   return method === 'GET'
     ? request.get(url, { params, signal, onDownloadProgress }).then(successHandler, failHandler)
     : request.post(url, params, { headers, signal, onDownloadProgress }).then(successHandler, failHandler)
@@ -82,6 +86,20 @@ export function post<T = any>(
     data,
     headers,
     onDownloadProgress,
+    signal,
+    beforeRequest,
+    afterRequest,
+  })
+}
+
+/** DELETE 请求：参数走 body（axios 的 `data`），不放 query */
+export function del<T = any>(
+  { url, data, signal, beforeRequest, afterRequest }: HttpOption,
+): Promise<Response<T>> {
+  return http<T>({
+    url,
+    method: 'DELETE',
+    data,
     signal,
     beforeRequest,
     afterRequest,
