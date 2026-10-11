@@ -11,6 +11,8 @@ export interface ChatMessage {
       finish_reason?: string | null
     }>
   }
+  /** 13.4 降级提示：上游拒绝图片后已剥图重试成功，服务端随帧带出，前端 toast 一次 */
+  notice?: string
 }
 
 export interface RequestOptions {

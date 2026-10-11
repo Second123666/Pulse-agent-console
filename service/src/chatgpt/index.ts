@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import * as dotenv from 'dotenv'
 import { sendResponse } from '../utils'
-import { contentChars, contentText } from '../utils/content'
+import { contentChars, contentImageCount, contentText } from '../utils/content'
 import { isNotEmptyString } from '../utils/is'
 import type { ApiModel, ChatContext, MessageContent, ModelConfig } from '../types'
 import type { ChatMessage, RequestOptions } from './types'
@@ -29,6 +29,26 @@ if (!isNotEmptyString(apiKey))
   throw new Error('Missing API_KEY environment variable')
 
 const apiModel: ApiModel = 'OpenAICompatible'
+
+/**
+ * 上游「内容格式不认」的典型状态码（13.4 降级用）。
+ * **刻意不含 401 / 403 / 429 / 5xx** —— 那些是密钥、限流、服务本身的问题，
+ * 剥掉图片重试只会白打一次请求，还会把真正的错误往后挪
+ */
+const CONTENT_REJECT_STATUSES = new Set([400, 413, 415, 422])
+
+/** 降级提示：随 SSE 帧带出去，前端 toast 展示一次 */
+const MULTIMODAL_DEGRADE_NOTICE = '当前模型不支持图片，已按纯文本发送'
+
+/**
+ * 把多模态 content 剥成纯文本：丢掉图片分片、文字拼接（string 原样返回）。
+ * 纯图片消息（一个字都没有）给个占位 —— 空串同样是上游不认的非法内容
+ */
+function toTextOnly(content: MessageContent): string {
+  if (typeof content === 'string')
+    return content
+  return contentText(content) || '[图片已省略]'
+}
 
 // 对话历史保存在内存中，以消息 id 为键、通过 parentMessageId 链接成对话
 interface MessageRecord {
@@ -83,7 +103,7 @@ async function chatReplyProcess(options: RequestOptions) {
     // 而 `union += string` 在类型上过不去 —— 助手这条恒为纯文本，用局部 string 才是实话
     let assistantText = ''
 
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: MessageContent }> = []
+    let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: MessageContent }> = []
     if (isNotEmptyString(systemMessage))
       messages.push({ role: 'system', content: systemMessage })
     messages.push(...buildHistory(parentMessageId), { role: 'user', content: message })
@@ -100,7 +120,7 @@ async function chatReplyProcess(options: RequestOptions) {
     const onExternalAbort = () => controller.abort()
     options.signal?.addEventListener('abort', onExternalAbort)
 
-    const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+    const requestUpstream = () => fetch(`${apiBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -115,6 +135,32 @@ async function chatReplyProcess(options: RequestOptions) {
       }),
       signal: controller.signal,
     })
+
+    let response = await requestUpstream()
+
+    // ---- 13.4 非多模态模型的降级：失败后剥图重试一次 ----
+    //
+    // 选**失败降级**而不是能力开关，理由有三：
+    // ① 能力开关要先知道模型支不支持图，而 OpenAI 兼容网关的模型名五花八门，
+    //    配错方向的后果是「能看图的模型被静默剥图」或「不能看图的模型每次必炸」，都很难发现；
+    // ② 失败降级对支持图片的模型是**零成本**（一次请求都不会多发），默认行为不变，老格式请求逐字不动；
+    // ③ 开关需要一个配置面（环境变量 + /config 下发 + 前端感知），失败降级把整件事收在这一处。
+    // 代价是不支持图片的模型每轮会先白挨一次 4xx —— 但剥图后立刻写回 messageStore，
+    // 后续轮次的历史已经是纯文本，**只有第一次带图的请求会付出这次往返**
+    let degraded = false
+    if (!response.ok && CONTENT_REJECT_STATUSES.has(response.status) && !options.signal?.aborted
+      && messages.some(item => contentImageCount(item.content) > 0)) {
+      const rejectedText = await response.text().catch(() => '')
+      global.console.log(`[API] 上游拒绝多模态内容 (${response.status})，剥离图片重试一次：${rejectedText.slice(0, 200)}`)
+      // 连历史一起剥：不能只管本轮，上一轮留在历史里的图片同样会把请求再顶回来一次
+      messages = messages.map(item => ({ role: item.role, content: toTextOnly(item.content) }))
+      // 写回存储：下一轮 buildHistory 取到的就是纯文本，降级只在带图的第一轮发生一次
+      userMessage.content = toTextOnly(message)
+      response = await requestUpstream()
+      // 重试成功才算降级成立：仍失败就照常报错，错误来自第二次请求、不带提示
+      degraded = response.ok
+    }
+    const notice = degraded ? MULTIMODAL_DEGRADE_NOTICE : undefined
 
     if (!response.ok || !response.body) {
       clearTimeout(timer)
@@ -132,14 +178,16 @@ async function chatReplyProcess(options: RequestOptions) {
     let buffer = ''
     let finishReason: string | null = null
 
-    // 与前端约定：每次推送全量累计文本，detail 透传 finish_reason 以支持长回复续写
+    // 与前端约定：每次推送全量累计文本，detail 透传 finish_reason 以支持长回复续写；
+    // 降级说明（notice）每帧都带，前端去重后只 toast 一次
     const emit = () => {
       process?.({
         id: assistantMessage.id,
         text: assistantText,
         conversationId,
         detail: { choices: [{ finish_reason: finishReason }] },
-      } as ChatMessage)
+        ...(notice ? { notice } : {}),
+      } satisfies ChatMessage)
     }
 
     try {
@@ -182,7 +230,7 @@ async function chatReplyProcess(options: RequestOptions) {
 
     messageStore.set(assistantMessage.id, assistantMessage)
     emit()
-    return sendResponse({ type: 'Success', data: { id: assistantMessage.id, text: assistantText, conversationId } })
+    return sendResponse({ type: 'Success', data: { id: assistantMessage.id, text: assistantText, conversationId, ...(notice ? { notice } : {}) } })
   }
   catch (error: any) {
     // 客户端主动中止（用户点停止 / 关页面）：原样上抛，由调用方按 error.name 静默处理。

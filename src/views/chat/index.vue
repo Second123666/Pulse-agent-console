@@ -568,12 +568,20 @@ async function onConversation() {
     }
     else {
       let lastText = ''
+      // 13.4 降级提示每帧都带，只 toast 一次（每轮各自的开关，下一轮带图仍会再提示）
+      let noticeShown = false
       const fetchChatAPIOnce = async () => {
         await fetchChatAPIProcessStream({
           prompt: content,
           options,
           signal: controller.signal,
           onEvent: (data) => {
+            // 上游拒绝图片 → 后端剥图重试成功：告诉用户「图没送给模型」，否则他以为模型看过了
+            if (data.notice && !noticeShown) {
+              noticeShown = true
+              ms.warning(data.notice)
+            }
+
             // 后端错误帧（status: 'Fail'）直接展示，不再依赖抛错
             if (data.status === 'Fail') {
               updateChatSome(

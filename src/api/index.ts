@@ -39,6 +39,8 @@ export interface ChatProcessEvent {
   detail?: { choices: Array<{ finish_reason?: string | null }> }
   status?: 'Success' | 'Fail'
   message?: string
+  /** 13.4 降级提示：上游拒绝图片后已剥图重试成功。每帧都带，调用方自行去重只提示一次 */
+  notice?: string
 }
 
 /**
