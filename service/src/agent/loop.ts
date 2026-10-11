@@ -162,7 +162,8 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
 
       // 单点截断：回填模型上下文与 SSE 事件用同一份截断结果，
       // 保证「模型看到的」与「前端收到的」一致（前端另有更小阈值的展示截断）
-      return truncateToolResult(String(await tool.handler(args)))
+      // 第二个参数是执行上下文：按用户隔离数据的工具（rag_search）凭它限定范围
+      return truncateToolResult(String(await tool.handler(args, { userId: options.userId })))
     }))
 
     // 结果按**原顺序**推送，而非完成顺序：前端 agentSteps 是「按到达顺序 append 的扁平数组」

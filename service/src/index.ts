@@ -195,6 +195,9 @@ router.post('/agent-process', [limiter, requireAuth], async (req, res) => {
       tools: list(),
       systemMessage: effectiveSystemMessage,
       signal: controller.signal,
+      // 当前用户会作为 ToolContext 传给每个工具：rag_search 凭它把检索范围限在本人的知识库内。
+      // 未登录时传 undefined，工具侧按 fail-closed 拒绝服务
+      userId: hasUser ? userId : undefined,
       // 审批通道：仅登录用户可用。未登录（理论上被 requireAuth 挡住）时不给回调，
       // loop 按 fail-closed 直接拒绝需审批的工具
       requestApproval: hasUser

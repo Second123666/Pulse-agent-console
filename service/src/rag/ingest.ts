@@ -1,11 +1,28 @@
 /* eslint-disable no-console */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { type TextChunk, chunkText } from './chunk'
+import { getDb } from '../store/db'
+import { chunkText } from './chunk'
 import { embedTexts } from './embed'
 import { upsert } from './store'
 
 const KNOWLEDGE_DIR = path.resolve(process.cwd(), 'knowledge')
+
+/**
+ * CLI 摄取没有「当前用户」，统一挂到管理员名下。
+ *
+ * 在「适配 userId」与「标记 deprecated」之间选了前者：`service/knowledge/` 批量灌库
+ * 在开发期仍然好用（12.2 的上传接口是给终端用户用的，一次一个文件，不适合灌整套文档）。
+ * 挂管理员是唯一说得通的归属 —— 能跑这条命令行的人本来就是这个部署的运维者。
+ */
+function adminUserId(): number {
+  const row = getDb()
+    .prepare('SELECT id FROM users WHERE role = \'admin\' ORDER BY id LIMIT 1')
+    .get() as { id: number } | undefined
+  if (!row)
+    throw new Error('库中没有管理员账号，无法确定知识库归属。请先注册首个账号（首个注册用户即管理员）。')
+  return Number(row.id)
+}
 
 async function main(): Promise<void> {
   let files: string[]
@@ -21,21 +38,29 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const chunks: TextChunk[] = []
+  const userId = adminUserId()
+
+  const chunks: Array<{ id: string; text: string; docId: string }> = []
   const texts: string[] = []
   for (const file of files) {
     const content = await fs.readFile(path.join(KNOWLEDGE_DIR, file), 'utf-8')
     const pieces = chunkText(content)
     pieces.forEach((piece, i) => {
-      chunks.push({ id: `${file}:${i}`, text: piece })
+      chunks.push({ id: `${file}:${i}`, text: piece, docId: file })
       texts.push(piece)
     })
   }
 
   console.log(`切块完成：${files.length} 个文件，共 ${chunks.length} 块，开始生成 embedding...`)
   const vectors = await embedTexts(texts)
-  await upsert(chunks.map((chunk, i) => ({ id: chunk.id, text: chunk.text, vector: vectors[i] })))
-  console.log(`摄取完成：${chunks.length} 块已入库（service/data/vectors.json）`)
+  await upsert(chunks.map((chunk, i) => ({
+    id: chunk.id,
+    text: chunk.text,
+    vector: vectors[i],
+    userId,
+    docId: chunk.docId,
+  })))
+  console.log(`摄取完成：${chunks.length} 块已入库（归属 userId=${userId}，service/data/vectors.json）`)
 }
 
 main().catch((error) => {

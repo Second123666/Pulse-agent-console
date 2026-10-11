@@ -48,12 +48,24 @@ export type AgentEvent =
  */
 export type SequencedAgentEvent = AgentEvent & { seq: number }
 
+/**
+ * 工具执行上下文。
+ *
+ * 目前只带当前用户 —— `rag_search` 必须按用户隔离知识库（12.1）。
+ * 作为 handler 的**可选**第二参数传入：不需要它的工具（calculator / get_time /
+ * web_search / read_file）签名完全不用改，也就不用挨个动。
+ */
+export interface ToolContext {
+  /** 当前登录用户 id；未登录时为 undefined，需按用户隔离的工具应据此拒绝服务 */
+  userId?: number
+}
+
 /** 工具定义：元信息 + 执行函数 */
 export interface Tool {
   name: string
   description: string
   parameters: Record<string, unknown>
-  handler: (args: Record<string, unknown>) => Promise<string> | string
+  handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string> | string
   /** 执行前是否需用户确认（human-in-the-loop）；缺省 false */
   requiresApproval?: boolean
   /** 展示给用户的审批理由（requiresApproval 为真时建议填写） */
@@ -75,6 +87,11 @@ export interface AgentRunOptions {
   tokenBudget?: number
   /** 中止信号：客户端断开时中止循环，避免继续消耗 token */
   signal?: AbortSignal
+  /**
+   * 当前登录用户 id，会作为 ToolContext 传给每个工具的 handler。
+   * 按用户隔离数据的工具（`rag_search`）据此限定检索范围
+   */
+  userId?: number
   /**
    * 需审批的工具执行前调用，挂起等待用户决策，resolve(true) 才执行。
    * **缺省视为拒绝（fail-closed）** —— 未接线审批通道时，需审批的工具一律不执行
