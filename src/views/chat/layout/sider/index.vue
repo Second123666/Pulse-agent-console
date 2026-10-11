@@ -1,12 +1,12 @@
 <script setup lang='ts'>
 import type { CSSProperties } from 'vue'
-import { computed, watch } from 'vue'
-import { NButton, NLayoutSider, useDialog } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { NButton, NLayoutSider, NModal, useDialog } from 'naive-ui'
 import List from './List.vue'
 import Footer from './Footer.vue'
 import { useAppStore, useChatStore } from '@/store'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { BrandLogo, SvgIcon } from '@/components/common'
+import { BrandLogo, Knowledge, SvgIcon } from '@/components/common'
 import { openCommandPalette } from '@/components/common/CommandPalette/state'
 import { t } from '@/locales'
 
@@ -16,6 +16,9 @@ const chatStore = useChatStore()
 const dialog = useDialog()
 
 const { isMobile } = useBasicLayout()
+
+/** 知识库面板。入口放在侧边栏底部 —— 就是 10.3 删掉的「提示词商店」那个位置 */
+const showKnowledge = ref(false)
 
 const collapsed = computed(() => appStore.siderCollapsed)
 
@@ -127,7 +130,15 @@ watch(
         <div class="flex-1 min-h-0 pb-4 overflow-hidden">
           <List />
         </div>
-        <div class="flex items-center justify-end p-4">
+        <div class="flex items-center p-4 space-x-4">
+          <div class="flex-1">
+            <NButton block @click="showKnowledge = true">
+              <template #icon>
+                <SvgIcon icon="ri:book-2-line" />
+              </template>
+              {{ $t('setting.knowledge') }}
+            </NButton>
+          </div>
           <NButton @click="handleClearAll">
             <SvgIcon icon="ri:close-circle-line" />
           </NButton>
@@ -136,6 +147,18 @@ watch(
       <Footer />
     </div>
   </NLayoutSider>
+  <NModal
+    v-model:show="showKnowledge" :auto-focus="false" preset="card"
+    style="width: 95%; max-width: 640px"
+  >
+    <template #header>
+      <div class="flex items-center gap-2">
+        <SvgIcon class="text-lg" icon="ri:book-2-line" />
+        <span>{{ $t('setting.knowledge') }}</span>
+      </div>
+    </template>
+    <Knowledge />
+  </NModal>
   <template v-if="isMobile">
     <div v-show="!collapsed" class="fixed inset-0 z-40 w-full h-full bg-black/40" @click="handleUpdateCollapsed" />
   </template>

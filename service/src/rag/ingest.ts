@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     userId,
     docId: chunk.docId,
   })))
-  console.log(`摄取完成：${chunks.length} 块已入库（归属 userId=${userId}，service/data/vectors.json）`)
+  console.log(`摄取完成：${chunks.length} 块已入库（归属 userId=${userId}，service/data/agent.db 的 vectors 表）`)
 }
 
 main().catch((error) => {

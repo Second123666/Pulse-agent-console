@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS knowledge_docs (
   UNIQUE(user_id, doc_id)
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge_docs(user_id);
+
+-- 向量库（12.5 从 vectors.json 迁来）。向量以 Float32 BLOB 存，编解码见 store/vectorBlob.ts。
+-- user_id 刻意允许 NULL：SQL 里「user_id = ?」对 NULL 恒不成立，缺归属的行对所有人都查不到 ——
+-- 与 12.1 定的 fail-closed 语义一致（宁可查不到也不误给）。TS 侧 userId 仍是必填，写入前由编译器把关。
+CREATE TABLE IF NOT EXISTS vectors (
+  id      TEXT    NOT NULL PRIMARY KEY,
+  text    TEXT    NOT NULL,
+  vector  BLOB    NOT NULL,
+  user_id INTEGER,
+  doc_id  TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_vectors_user ON vectors(user_id);
 `
 
 /**

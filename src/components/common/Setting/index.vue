@@ -3,7 +3,6 @@ import { computed, ref } from 'vue'
 import { NModal, NTabPane, NTabs } from 'naive-ui'
 import General from './General.vue'
 import Advanced from './Advanced.vue'
-import Knowledge from './Knowledge.vue'
 import Usage from './Usage.vue'
 import About from './About.vue'
 import { useAuthStore } from '@/store'
@@ -57,15 +56,6 @@ const show = computed({
           </template>
           <div class="min-h-[100px]">
             <Advanced />
-          </div>
-        </NTabPane>
-        <NTabPane name="Knowledge" tab="Knowledge">
-          <template #tab>
-            <SvgIcon class="text-lg" icon="ri:book-2-line" />
-            <span class="ml-2">{{ $t('setting.knowledge') }}</span>
-          </template>
-          <div class="min-h-[100px]">
-            <Knowledge />
           </div>
         </NTabPane>
         <NTabPane name="Usage" tab="Usage">

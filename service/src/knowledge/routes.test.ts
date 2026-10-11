@@ -1,6 +1,4 @@
 import type { Server } from 'node:http'
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
 import express from 'express'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,9 +21,6 @@ const { ragSearch } = await import('../tools/ragSearch')
 let server: Server
 let base: string
 
-/** 测试跑完必须清掉落盘的向量库：留着会污染下一次 lint（data/ 目录已 gitignore） */
-const VECTORS_FILE = path.join(process.cwd(), 'data', 'vectors.json')
-
 beforeAll(async () => {
   const app = express()
   app.use(express.json({ limit: '10mb' }))
@@ -43,14 +38,13 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${port}`
 })
 
-afterAll(async () => {
+afterAll(() => {
   server?.close()
-  await fs.rm(VECTORS_FILE, { force: true })
 })
 
 beforeEach(async () => {
   mockEmbedTexts.mockReset()
-  // 向量库是进程内的内存态 + 落盘文件，测试间必须清干净
+  // 向量库 12.5 起也在 SQLite 里（与 knowledge_docs 同库），测试间必须清干净
   await clear()
   const db = getDb()
   db.exec('DELETE FROM knowledge_docs')

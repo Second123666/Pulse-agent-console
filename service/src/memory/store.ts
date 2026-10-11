@@ -1,5 +1,6 @@
 import { cosineSimilarity } from '../rag/store'
 import { getDb } from '../store/db'
+import { fromBlob, toBlob } from '../store/vectorBlob'
 
 /**
  * 长期记忆的持久化层。
@@ -26,19 +27,7 @@ export interface ScoredMemory extends MemoryRow {
   score: number
 }
 
-/** number[] → Float32 BLOB */
-function toBlob(vector: number[]): Uint8Array {
-  return new Uint8Array(new Float32Array(vector).buffer)
-}
-
-/** BLOB → number[]；非 BLOB 或空值返回 null */
-function fromBlob(value: unknown): number[] | null {
-  if (!(value instanceof Uint8Array) || value.byteLength === 0)
-    return null
-  // 复制出对齐的 ArrayBuffer 再构造 Float32Array：DB 返回的视图 byteOffset 未必是 4 的倍数
-  const buffer = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
-  return Array.from(new Float32Array(buffer))
-}
+/** number[] → Float32 BLOB / BLOB → number[] 统一放在 store/vectorBlob.ts，与向量库共用一份 */
 
 function toRow(raw: any): MemoryRow {
   return {

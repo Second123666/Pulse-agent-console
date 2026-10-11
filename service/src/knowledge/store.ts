@@ -11,8 +11,8 @@ import { getDb } from '../store/db'
  * 都是 `userId`，且每条 SQL 都带 `user_id = ?` 过滤；向量库侧则依赖 `VectorRecord.userId`
  * （见 rag/store.ts 的 search/all）。
  *
- * 元数据（文件名、块数、上传时间）放 SQLite，向量本体留在 `data/vectors.json` ——
- * 元数据要能按用户查询与排序，向量是大块载荷，分开各取所长。
+ * 元数据（文件名、块数、上传时间）与向量本体都在 SQLite 里（`knowledge_docs` / `vectors` 表）——
+ * 元数据要能按用户查询与排序，向量是大块载荷，分表各取所长；12.5 起向量不再整文件重写。
  */
 
 /**

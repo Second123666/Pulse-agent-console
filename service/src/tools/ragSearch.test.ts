@@ -1,13 +1,13 @@
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { clear, upsert } from '../rag/store'
 import { ragSearch } from './ragSearch'
 
+// 向量库 12.5 起走 SQLite；getDb 惰性读 env，必须在第一次检索之前定死路径，
+// 否则测试数据会写进真实的 data/agent.db
+process.env.AGENT_DB_PATH = ':memory:'
+
 const { mockEmbedTexts } = vi.hoisted(() => ({ mockEmbedTexts: vi.fn() }))
 vi.mock('../rag/embed', () => ({ embedTexts: mockEmbedTexts }))
-
-const FILE = path.join(process.cwd(), 'data', 'vectors.json')
 
 /** 已登录用户的工具上下文（12.1 起 handler 的第二个参数） */
 const CTX = { userId: 1 }
@@ -15,10 +15,6 @@ const CTX = { userId: 1 }
 beforeEach(async () => {
   mockEmbedTexts.mockReset()
   await clear()
-})
-
-afterAll(async () => {
-  await fs.rm(FILE, { force: true })
 })
 
 describe('rag_search', () => {
