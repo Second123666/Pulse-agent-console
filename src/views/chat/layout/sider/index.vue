@@ -1,12 +1,12 @@
 <script setup lang='ts'>
 import type { CSSProperties } from 'vue'
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { NButton, NLayoutSider, useDialog } from 'naive-ui'
 import List from './List.vue'
 import Footer from './Footer.vue'
 import { useAppStore, useChatStore } from '@/store'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { BrandLogo, PromptStore, SvgIcon } from '@/components/common'
+import { BrandLogo, SvgIcon } from '@/components/common'
 import { openCommandPalette } from '@/components/common/CommandPalette/state'
 import { t } from '@/locales'
 
@@ -16,7 +16,6 @@ const chatStore = useChatStore()
 const dialog = useDialog()
 
 const { isMobile } = useBasicLayout()
-const show = ref(false)
 
 const collapsed = computed(() => appStore.siderCollapsed)
 
@@ -128,12 +127,7 @@ watch(
         <div class="flex-1 min-h-0 pb-4 overflow-hidden">
           <List />
         </div>
-        <div class="flex items-center p-4 space-x-4">
-          <div class="flex-1">
-            <NButton block @click="show = true">
-              {{ $t('store.siderButton') }}
-            </NButton>
-          </div>
+        <div class="flex items-center justify-end p-4">
           <NButton @click="handleClearAll">
             <SvgIcon icon="ri:close-circle-line" />
           </NButton>
@@ -145,5 +139,4 @@ watch(
   <template v-if="isMobile">
     <div v-show="!collapsed" class="fixed inset-0 z-40 w-full h-full bg-black/40" @click="handleUpdateCollapsed" />
   </template>
-  <PromptStore v-model:visible="show" />
 </template>

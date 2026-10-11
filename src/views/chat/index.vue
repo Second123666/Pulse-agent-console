@@ -2,8 +2,7 @@
 import type { Ref } from 'vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { storeToRefs } from 'pinia'
-import { NAutoComplete, NButton, NDropdown, NInput, useDialog, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NInput, useDialog, useMessage } from 'naive-ui'
 import { Message } from './components'
 import EmptyState from './components/EmptyState/index.vue'
 import { useScroll } from './hooks/useScroll'
@@ -12,7 +11,7 @@ import { useUsingContext } from './hooks/useUsingContext'
 import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { clearPendingJump, pendingJumpTarget, useChatStore, usePromptStore, useSettingStore } from '@/store'
+import { clearPendingJump, pendingJumpTarget, useChatStore, useSettingStore } from '@/store'
 import type { AgentResumeCursor } from '@/api'
 import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
@@ -87,13 +86,6 @@ const inputRef = ref<Ref | null>(null)
 const isRecording = ref(false)
 const recognition = ref<any>(null)
 const voices = ref<SpeechSynthesisVoice[]>([])
-
-// 添加PromptStore
-const promptStore = usePromptStore()
-
-// 使用storeToRefs，保证store修改后，联想部分能够重新渲染
-// PromptList 类型为空元组，这里显式声明为 prompt 列表结构
-const { promptList: promptTemplate } = storeToRefs(promptStore) as { promptList: { value: Array<{ key: string; value: string }> } }
 
 // 未知原因刷新页面，loading 状态不会重置，手动重置
 // agentStalled 同理：刷新后连接必然已断，旧的「连接可能已中断」提示是陈旧信息，一并清掉
@@ -795,32 +787,6 @@ function handleStop() {
   }
 }
 
-// 可优化部分
-// 搜索选项计算，这里使用value作为索引项，所以当出现重复value时渲染异常(多项同时出现选中效果)
-// 理想状态下其实应该是key作为索引项,但官方的renderOption会出现问题，所以就需要value反renderLabel实现
-const searchOptions = computed(() => {
-  if (prompt.value.startsWith('/')) {
-    return promptTemplate.value.filter((item: { key: string }) => item.key.toLowerCase().includes(prompt.value.substring(1).toLowerCase())).map((obj: { value: any }) => {
-      return {
-        label: obj.value,
-        value: obj.value,
-      }
-    })
-  }
-  else {
-    return []
-  }
-})
-
-// value反渲染key
-const renderOption = (option: { label: string }) => {
-  for (const i of promptTemplate.value) {
-    if (i.value === option.label)
-      return [i.key]
-  }
-  return []
-}
-
 const placeholder = computed(() => {
   if (isMobile.value)
     return t('chat.placeholderMobile')
@@ -1088,15 +1054,10 @@ onUnmounted(() => {
               <SvgIcon :icon="isRecording ? 'ri:mic-off-line' : 'ri:mic-line'" />
             </span>
           </HoverButton>
-          <NAutoComplete v-model:value="prompt" :options="searchOptions" :render-label="renderOption">
-            <template #default="{ handleInput, handleBlur, handleFocus }">
-              <NInput
-                ref="inputRef" v-model:value="prompt" type="textarea" :placeholder="placeholder"
-                :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 8 }" @input="handleInput" @focus="handleFocus"
-                @blur="handleBlur" @keypress="handleEnter"
-              />
-            </template>
-          </NAutoComplete>
+          <NInput
+            ref="inputRef" v-model:value="prompt" type="textarea" :placeholder="placeholder"
+            :autosize="{ minRows: 1, maxRows: isMobile ? 4 : 8 }" @keypress="handleEnter"
+          />
           <NButton type="primary" :disabled="buttonDisabled" @click="handleSubmit">
             <template #icon>
               <span class="dark:text-black">
