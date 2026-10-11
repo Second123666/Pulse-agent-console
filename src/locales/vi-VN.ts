@@ -48,6 +48,11 @@ export default {
     preview: 'Xem trước',
     showRawText: 'Hiển thị dưới dạng văn bản thô',
     thinking: 'Đang suy nghĩ...',
+    imagesTooMany: 'Tối đa {max} ảnh mỗi tin nhắn',
+    imageTypeError: 'Chỉ chấp nhận ảnh ({type})',
+    imageReadError: 'Không đọc được ảnh này, hãy thử ảnh khác',
+    imageTooLarge: 'Ảnh vẫn quá lớn sau khi nén: {size} (giới hạn {max})',
+    imagesTotalTooLarge: 'Tổng kích thước ảnh vượt giới hạn, hãy gửi ít ảnh hơn hoặc ảnh nhỏ hơn',
   },
   setting: {
     setting: 'Cài đặt',

@@ -49,6 +49,11 @@ export default {
     preview: '預覽',
     showRawText: '顯示原文',
     thinking: '思考中...',
+    imagesTooMany: '一次最多 {max} 張圖片',
+    imageTypeError: '只支援圖片檔案（{type}）',
+    imageReadError: '圖片讀取失敗，換一張試試',
+    imageTooLarge: '圖片壓縮後仍超限：{size}（上限 {max}）',
+    imagesTotalTooLarge: '圖片總大小超限，請減少圖片數量後重試',
   },
   setting: {
     setting: '設定',

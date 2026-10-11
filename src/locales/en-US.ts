@@ -67,6 +67,11 @@ export default {
     preview: 'Preview',
     showRawText: 'Show as raw text',
     thinking: 'Thinking...',
+    imagesTooMany: 'Up to {max} images per message',
+    imageTypeError: 'Only images are supported ({type})',
+    imageReadError: 'Failed to read this image, try another one',
+    imageTooLarge: 'Image still too large after compression: {size} (limit {max})',
+    imagesTotalTooLarge: 'Combined image size exceeds the limit, send fewer or smaller images',
   },
   setting: {
     setting: 'Setting',

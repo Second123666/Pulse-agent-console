@@ -2,8 +2,19 @@ import type { GenericAbortSignal } from 'axios'
 import { del, get, post } from '@/utils/request'
 import { useAuthStore, useSettingStore } from '@/store'
 
+/**
+ * 多模态 content 的单个分片（13.1 后端协议，13.2 前端接上）。
+ * 与 `service/src/types.ts` 的 `ContentPart` 同构 —— 两边各定义一份，靠测试与真实请求把关。
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+/** 消息 content：纯文本，或多模态分片数组。发送带图消息时才用后者 */
+export type MessageContent = string | ContentPart[]
+
 export function fetchChatAPI<T = any>(
-  prompt: string,
+  prompt: MessageContent,
   options?: { conversationId?: string; parentMessageId?: string },
   signal?: GenericAbortSignal,
 ) {
@@ -36,7 +47,7 @@ export interface ChatProcessEvent {
  * 增量块只含新帧、每帧只解析一次（O(n)），且协议与 /agent-process 统一。
  */
 export function fetchChatAPIProcessStream(params: {
-  prompt: string
+  prompt: MessageContent
   options?: { conversationId?: string; parentMessageId?: string }
   signal?: AbortSignal
   onEvent: (event: ChatProcessEvent) => void
@@ -294,10 +305,10 @@ export interface AgentResumeCursor {
 }
 
 export interface FetchAgentProcessParams {
-  prompt: string
+  prompt: MessageContent
   systemMessage?: string
   /** 历史上下文（不含本轮 prompt），缺省为空 */
-  messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages?: Array<{ role: 'user' | 'assistant'; content: MessageContent }>
   /** 会话 uuid：后端据此挂靠长期记忆摘要 */
   conversationId?: number
   signal?: AbortSignal

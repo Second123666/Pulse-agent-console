@@ -48,6 +48,11 @@ export default {
     clearHistoryConfirm: '¿Estás seguro de borrar el historial de chat?',
     preview: 'Avance',
     showRawText: 'Mostrar como texto sin formato',
+    imagesTooMany: 'Máximo {max} imágenes por mensaje',
+    imageTypeError: 'Solo se admiten imágenes ({type})',
+    imageReadError: 'No se pudo leer esta imagen, prueba con otra',
+    imageTooLarge: 'La imagen sigue siendo demasiado grande tras comprimirla: {size} (límite {max})',
+    imagesTotalTooLarge: 'El tamaño total de las imágenes supera el límite, envía menos o más pequeñas',
   },
   setting: {
     setting: 'Configuración',

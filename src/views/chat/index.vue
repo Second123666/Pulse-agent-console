@@ -12,10 +12,11 @@ import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
 import { clearPendingJump, pendingJumpTarget, useChatStore, useSettingStore } from '@/store'
-import type { AgentResumeCursor } from '@/api'
+import type { AgentResumeCursor, ContentPart, MessageContent } from '@/api'
 import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
 import { buildExportFileName, downloadText, toMarkdown, toPlainText } from '@/utils/export'
+import { MAX_ATTACHMENTS, MAX_IMAGE_BASE64_CHARS, MAX_TOTAL_BASE64_CHARS, compressImage, formatBytes, isImageFile } from '@/utils/image'
 
 let controller = new AbortController()
 
@@ -83,6 +84,24 @@ const prompt = ref<string>('')
 const loading = ref<boolean>(false)
 const inputRef = ref<Ref | null>(null)
 
+/**
+ * 待发送的图片附件（13.2）。**只活在输入阶段**：
+ * 提交时拼进 content parts，发送成功后清空；失败则原样留着，不让用户重选。
+ * 消息气泡里的回显与落库是 13.3 的范围 —— 所以此刻「发出去的图在聊天气泡里还看不见」，
+ * 这个窗口期的空缺已记入 PROGRESS.md
+ */
+interface ImageAttachment {
+  id: string
+  name: string
+  /** 压缩后的 dataURL，直接作为 image_url.url */
+  dataUrl: string
+  /** base64 字符数，用于限额累计 */
+  bytes: number
+}
+
+const attachments = ref<ImageAttachment[]>([])
+const imageInputRef = ref<HTMLInputElement | null>(null)
+
 const isRecording = ref(false)
 const recognition = ref<any>(null)
 const voices = ref<SpeechSynthesisVoice[]>([])
@@ -97,6 +116,102 @@ dataSources.value.forEach((item, index) => {
 
 function handleSubmit() {
   onConversation()
+}
+
+/** 点击选图：走隐藏的 `<input type="file">`，与知识库上传同一套写法 */
+function pickImage() {
+  imageInputRef.value?.click()
+}
+
+async function handleFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  // 必须重置：不重置的话连续两次选同一个文件，浏览器认为值没变，change 根本不触发
+  input.value = ''
+  if (files.length > 0)
+    await addImages(files)
+}
+
+/** 粘贴（截图直接 Ctrl+V）。没带文件时是普通文本粘贴，交回默认行为，不能吞掉 */
+async function handlePaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.files ?? [])
+  if (files.length === 0)
+    return
+  event.preventDefault()
+  await addImages(files)
+}
+
+/** 拖拽到输入区。同样只在真的拖来文件时才接管 */
+async function handleDrop(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  if (files.length > 0)
+    await addImages(files)
+}
+
+function removeAttachment(index: number) {
+  attachments.value.splice(index, 1)
+}
+
+/** 已选图片的 base64 总字符数（限额是按**实际体积**算的，不是张数） */
+function attachmentBytes(): number {
+  return attachments.value.reduce((sum, item) => sum + item.bytes, 0)
+}
+
+/**
+ * 校验 → 压缩 → 入队。**每一步失败都只跳过这一张并给出具体原因**，
+ * 不因为一批里有一张坏图就把整批丢掉
+ */
+async function addImages(files: File[]) {
+  if (attachments.value.length + files.length > MAX_ATTACHMENTS) {
+    ms.error(t('chat.imagesTooMany', { max: MAX_ATTACHMENTS }))
+    return
+  }
+
+  let used = attachmentBytes()
+  for (const file of files) {
+    if (!isImageFile(file)) {
+      const type = file.type || file.name.split('.').pop() || '-'
+      ms.error(t('chat.imageTypeError', { type }))
+      continue
+    }
+
+    let image
+    try {
+      image = await compressImage(file)
+    }
+    catch {
+      ms.error(t('chat.imageReadError'))
+      continue
+    }
+
+    if (image.bytes > MAX_IMAGE_BASE64_CHARS) {
+      ms.error(t('chat.imageTooLarge', { size: formatBytes(image.bytes), max: formatBytes(MAX_IMAGE_BASE64_CHARS) }))
+      continue
+    }
+    if (used + image.bytes > MAX_TOTAL_BASE64_CHARS) {
+      ms.error(t('chat.imagesTotalTooLarge'))
+      continue
+    }
+
+    used += image.bytes
+    attachments.value.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: file.name,
+      dataUrl: image.dataUrl,
+      bytes: image.bytes,
+    })
+  }
+}
+
+/**
+ * 拼提交用的 content parts。
+ * **没有图片时调用方根本不走这条路径**（直接传原始字符串），保证无图请求体与 13.1 之前逐字节一致
+ */
+function buildContentParts(text: string): ContentPart[] {
+  const parts: ContentPart[] = [{ type: 'text', text }]
+  for (const item of attachments.value)
+    parts.push({ type: 'image_url', image_url: { url: item.dataUrl } })
+  return parts
 }
 
 function handleExampleSelect(example: string) {
@@ -153,8 +268,11 @@ async function handleApprove(toolCallId: string, approved: boolean) {
 /** Agent 对话核心：向 userMsgIndex + 1 处的助手占位消息流式写入，onConversation 与 onRegenerate 共用。
  * userMsgIndex 为本轮 user 消息下标（历史上下文取其之前的消息）。
  * 传 resume 则走**续传**：不重跑循环，只请服务端补发断线期间漏掉的事件，已有内容原地保留。 */
-async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}, resume?: ResumeCursor) {
+async function runAgentConversation(promptText: string, controller: AbortController, userMsgIndex: number, options: Chat.ConversationRequest = {}, resume?: ResumeCursor, content?: MessageContent) {
   const targetIndex = userMsgIndex + 1
+  // 上行用的 content：缺省就是 promptText 本身（纯文本），只有本轮带了图片时才会传分片数组。
+  // 与 promptText 分开是因为后者还要写进消息气泡与 requestOptions，那里必须是字符串
+  const wireContent: MessageContent = content ?? promptText
   // 续传：步骤流从消息上恢复，绝不从零开始 —— 用户已经看到的工具调用过程必须原样留着
   const agentSteps: Chat.AgentStep[] = resume
     ? [...(getChatByUuidAndIndex(+uuid, targetIndex)?.agentSteps ?? [])]
@@ -232,7 +350,7 @@ async function runAgentConversation(promptText: string, controller: AbortControl
   }
 
   await fetchAgentProcess({
-    prompt: promptText,
+    prompt: wireContent,
     systemMessage: settingStore.systemMessage,
     messages: history,
     // 会话 uuid：后端据此把长期记忆摘要挂到本会话上
@@ -399,6 +517,10 @@ async function onConversation() {
   loading.value = true
   prompt.value = ''
 
+  // 提交用的 content：带图时是分片数组，否则就是原始字符串 ——
+  // 后者保证无图请求的字节与 13.1 放开之前完全一致（护栏要求）
+  let content: MessageContent = attachments.value.length > 0 ? buildContentParts(message) : message
+
   let options: Chat.ConversationRequest = {}
   const lastContext = conversationList.value[conversationList.value.length - 1]?.conversationOptions
 
@@ -423,13 +545,14 @@ async function onConversation() {
   try {
     if (settingStore.agentMode) {
       // 本轮 user 消息位于倒数第二（助手占位在最后）
-      await runAgentConversation(message, controller, dataSources.value.length - 2, options)
+      // content 只用于上行请求；promptText 仍是纯文本，供消息气泡与 requestOptions 使用
+      await runAgentConversation(message, controller, dataSources.value.length - 2, options, undefined, content)
     }
     else {
       let lastText = ''
       const fetchChatAPIOnce = async () => {
         await fetchChatAPIProcessStream({
-          prompt: message,
+          prompt: content,
           options,
           signal: controller.signal,
           onEvent: (data) => {
@@ -461,6 +584,8 @@ async function onConversation() {
               options.parentMessageId = data.id
               lastText = data.text
               message = ''
+              // 续写是同一条回复的延长，不能再把同一批图片重发一遍
+              content = ''
               return fetchChatAPIOnce()
             }
 
@@ -472,6 +597,10 @@ async function onConversation() {
 
       await fetchChatAPIOnce()
     }
+
+    // 两条链路都正常走完 = 服务端确认收到了本轮 → 预览条清空。
+    // 走到 catch 的失败（含用户点停止）**不动 attachments**，图片留给用户直接重试
+    attachments.value = []
   }
   catch (error: any) {
     const errorMessage = error?.message ?? t('common.wrong')
@@ -1019,7 +1148,24 @@ onUnmounted(() => {
       </div>
     </main>
     <footer :class="footerClass">
-      <div class="w-full max-w-screen-xl m-auto">
+      <!-- 拖拽 / 粘贴的落点放在整个输入区：只在真的带文件时才接管，普通文本粘贴走默认行为 -->
+      <div class="w-full max-w-screen-xl m-auto" @dragover.prevent @drop.prevent="handleDrop" @paste="handlePaste">
+        <!-- 图片附件预览条：在工具行上方，每张带删除按钮；发送成功后整条清空 -->
+        <div v-if="attachments.length > 0" class="flex flex-wrap gap-2 pb-2">
+          <div v-for="(item, index) in attachments" :key="item.id" class="relative">
+            <img
+              :src="item.dataUrl" :alt="item.name"
+              class="object-cover w-16 h-16 rounded-lg border border-[var(--agent-hairline)]"
+            >
+            <button
+              title="移除图片"
+              class="absolute flex items-center justify-center w-4 h-4 text-white rounded-full -top-1.5 -right-1.5 bg-black/65 hover:bg-black"
+              @click="removeAttachment(index)"
+            >
+              <SvgIcon icon="ri:close-line" class="text-xs" />
+            </button>
+          </div>
+        </div>
         <div class="flex items-center justify-between space-x-2">
           <HoverButton v-if="!isMobile" tooltip="清空当前会话" placement="top" @click="handleClear">
             <span class="text-xl text-[#4f555e] dark:text-white">
@@ -1036,6 +1182,16 @@ onUnmounted(() => {
               </HoverButton>
             </span>
           </NDropdown>
+          <!-- 图片附件：点击选图。tooltip 沿用页脚其它按钮的硬编码中文写法，不新增 i18n 键 -->
+          <HoverButton tooltip="添加图片（也可直接粘贴 / 拖入）" placement="top" @click="pickImage">
+            <span
+              class="text-xl"
+              :class="{ 'text-[#0D9488]': attachments.length > 0, 'text-[#4f555e] dark:text-white': attachments.length === 0 }"
+            >
+              <SvgIcon icon="ri:image-line" />
+            </span>
+          </HoverButton>
+          <input ref="imageInputRef" type="file" accept="image/*" multiple class="hidden" @change="handleFileChange">
           <HoverButton :tooltip="settingStore.agentMode ? 'Agent 模式：开（模型可自主调用工具）' : 'Agent 模式：关（纯对话）'" placement="top" @click="toggleAgentMode">
             <span class="text-xl" :class="{ 'text-[#0D9488]': settingStore.agentMode, 'text-[#4f555e] dark:text-white': !settingStore.agentMode }">
               <SvgIcon icon="ri:robot-2-line" />

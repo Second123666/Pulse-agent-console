@@ -71,6 +71,11 @@ export default {
     assistant: '助手',
     reply: '回复',
     speak: '朗读',
+    imagesTooMany: '一次最多 {max} 张图片',
+    imageTypeError: '只支持图片文件（{type}）',
+    imageReadError: '图片读取失败，换一张试试',
+    imageTooLarge: '图片压缩后仍超限：{size}（上限 {max}）',
+    imagesTotalTooLarge: '图片总大小超限，请减少图片数量后重试',
   },
   setting: {
     setting: '设置',

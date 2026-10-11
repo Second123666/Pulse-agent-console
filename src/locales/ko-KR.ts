@@ -49,6 +49,11 @@ export default {
     preview: '미리보기',
     showRawText: '원본 텍스트로 보기',
     thinking: '생각 중...',
+    imagesTooMany: '메시지당 최대 {max}장까지',
+    imageTypeError: '이미지만 가능합니다 ({type})',
+    imageReadError: '이미지를 읽지 못했습니다. 다른 이미지를 시도하세요',
+    imageTooLarge: '압축 후에도 이미지가 너무 큽니다: {size} (상한 {max})',
+    imagesTotalTooLarge: '이미지 합계가 한도를 초과했습니다. 더 적게 또는 더 작게 보내세요',
   },
   setting: {
     setting: '설정',
