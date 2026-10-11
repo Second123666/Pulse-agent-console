@@ -53,6 +53,8 @@ export default {
     imageReadError: 'No se pudo leer esta imagen, prueba con otra',
     imageTooLarge: 'La imagen sigue siendo demasiado grande tras comprimirla: {size} (límite {max})',
     imagesTotalTooLarge: 'El tamaño total de las imágenes supera el límite, envía menos o más pequeñas',
+    imageAlt: 'Imagen adjunta',
+    imageOmitted: 'Imagen no guardada (supera el límite: {size})',
   },
   setting: {
     setting: 'Configuración',

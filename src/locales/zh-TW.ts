@@ -54,6 +54,8 @@ export default {
     imageReadError: '圖片讀取失敗，換一張試試',
     imageTooLarge: '圖片壓縮後仍超限：{size}（上限 {max}）',
     imagesTotalTooLarge: '圖片總大小超限，請減少圖片數量後重試',
+    imageAlt: '圖片附件',
+    imageOmitted: '圖片因體積超限未儲存（{size}）',
   },
   setting: {
     setting: '設定',

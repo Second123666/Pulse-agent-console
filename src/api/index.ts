@@ -171,7 +171,11 @@ export interface ServerMessage {
   role: 'user' | 'assistant'
   content: string
   agentSteps?: Chat.AgentStep[]
-  /** 其余展示字段：dateTime / inversion / error / quote / requestOptions / conversationOptions */
+  /**
+   * 其余展示字段：dateTime / inversion / error / quote / requestOptions / conversationOptions。
+   * 图片附件也走这里（`meta.images: string[]`，与 `Chat.Chat.images` 同构）——
+   * 服务端只有 `content` 一个字符串列和 `meta_json`，附件不额外占列
+   */
   meta?: Record<string, any> | null
   createdAt: number
 }

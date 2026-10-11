@@ -6,6 +6,7 @@ import { t } from '@/locales'
 import type { ServerConversation, ServerMessage } from '@/api'
 import { fetchConversationGet, fetchConversationList, fetchConversationSave } from '@/api'
 import { useAuthStore } from '@/store/modules/auth'
+import { MAX_ATTACHMENTS, MAX_META_IMAGE_CHARS, formatBytes } from '@/utils/image'
 
 /** 后端同步防抖间隔（毫秒） */
 const SERVER_SYNC_DEBOUNCE_MS = 1000
@@ -28,6 +29,28 @@ function isHydratedForCurrentUser(): boolean {
   return !!authStore.token && authStore.user?.id !== undefined && authStore.user.id === hydratedUserId
 }
 
+/**
+ * 图片附件按 `MAX_META_IMAGE_CHARS` 裁一刀，超限的那几张**只留文字占位**。
+ *
+ * 全量同步是整份状态原样推、`meta_json` 也是整条原样落库 —— 不在这里收口，
+ * 一条带 6 张图的消息就能让同步 body 撞上后端 10mb 上限，**连纯文本消息一起保存失败**
+ */
+function clipImages(images: string[]): string[] {
+  const out: string[] = []
+  let used = 0
+  for (const item of images) {
+    if (typeof item !== 'string')
+      continue
+    if (used + item.length <= MAX_META_IMAGE_CHARS) {
+      out.push(item)
+      used += item.length
+      continue
+    }
+    out.push(t('chat.imageOmitted', { size: formatBytes(item.length) }))
+  }
+  return out
+}
+
 /** 前端消息 → 服务端消息。loading / agentStalled 属瞬时态，不入库（否则刷新后永久转圈） */
 function toServerMessage(item: Chat.Chat): ServerMessage {
   return {
@@ -43,6 +66,8 @@ function toServerMessage(item: Chat.Chat): ServerMessage {
       requestOptions: item.requestOptions,
       // 用量随消息落库：不存的话刷新后那行小字就消失了
       ...(item.usage ? { usage: item.usage } : {}),
+      // 图片走 meta_json，content 仍是纯字符串（conversation/routes 的强校验不碰）
+      ...((item.images?.length) ? { images: clipImages(item.images) } : {}),
     },
     // dateTime 是本地化字符串，Date.parse 不可靠，解析不出就退化为当前时间；
     // 消息顺序由数组下标保证，时间戳仅用于展示与排序
@@ -61,6 +86,10 @@ function toLocalMessage(message: ServerMessage): Chat.Chat {
     ...((typeof meta.quote === 'string' && meta.quote) ? { quote: meta.quote } : {}),
     ...((Array.isArray(message.agentSteps) && message.agentSteps.length) ? { agentSteps: message.agentSteps } : {}),
     ...(meta.usage ? { usage: meta.usage as Chat.AgentUsage } : {}),
+    // meta 里的图片是外部数据：只认字符串数组，坏值直接丢，不让它把整条消息的水合搞崩
+    ...((Array.isArray(meta.images) && meta.images.length)
+      ? { images: meta.images.filter((item: unknown): item is string => typeof item === 'string').slice(0, MAX_ATTACHMENTS) }
+      : {}),
     conversationOptions: meta.conversationOptions ?? null,
     requestOptions: meta.requestOptions ?? { prompt: message.content, options: null },
   }

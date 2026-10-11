@@ -72,6 +72,8 @@ export default {
     imageReadError: 'Failed to read this image, try another one',
     imageTooLarge: 'Image still too large after compression: {size} (limit {max})',
     imagesTotalTooLarge: 'Combined image size exceeds the limit, send fewer or smaller images',
+    imageAlt: 'Image attachment',
+    imageOmitted: 'Image not saved (over size limit: {size})',
   },
   setting: {
     setting: 'Setting',

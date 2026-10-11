@@ -53,6 +53,8 @@ export default {
     imageReadError: 'Không đọc được ảnh này, hãy thử ảnh khác',
     imageTooLarge: 'Ảnh vẫn quá lớn sau khi nén: {size} (giới hạn {max})',
     imagesTotalTooLarge: 'Tổng kích thước ảnh vượt giới hạn, hãy gửi ít ảnh hơn hoặc ảnh nhỏ hơn',
+    imageAlt: 'Ảnh đính kèm',
+    imageOmitted: 'Ảnh không được lưu (vượt giới hạn dung lượng: {size})',
   },
   setting: {
     setting: 'Cài đặt',

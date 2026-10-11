@@ -16,7 +16,7 @@ import type { AgentResumeCursor, ContentPart, MessageContent } from '@/api'
 import { AgentResumeUnavailableError, fetchAgentApprove, fetchAgentProcess, fetchChatAPIProcessStream } from '@/api'
 import { t } from '@/locales'
 import { buildExportFileName, downloadText, toMarkdown, toPlainText } from '@/utils/export'
-import { MAX_ATTACHMENTS, MAX_IMAGE_BASE64_CHARS, MAX_TOTAL_BASE64_CHARS, compressImage, formatBytes, isImageFile } from '@/utils/image'
+import { MAX_ATTACHMENTS, MAX_IMAGE_BASE64_CHARS, MAX_TOTAL_BASE64_CHARS, compressImage, formatBytes, isImageFile, toThumbnails } from '@/utils/image'
 
 let controller = new AbortController()
 
@@ -501,6 +501,24 @@ async function onConversation() {
   resumeCursor = null
   controller = new AbortController()
 
+  // 转缩略图要过一次 canvas（毫秒级但终究是异步）：先把 loading 立起来，
+  // 挡住这一步与 addChat 之间的重复回车，否则同一条消息可能发两遍
+  loading.value = true
+
+  // 附件此刻还在：**全尺寸**那份喂给模型（下面的 buildContentParts），消息上挂的是**落库缩略图** ——
+  // 原图进 meta_json 的话，全量同步每次都要拖着几 MB 走，本地 localStorage 也扛不住
+  let images: string[] | undefined
+  if (attachments.value.length) {
+    const raw = attachments.value.map(item => item.dataUrl)
+    try {
+      images = await toThumbnails(raw)
+    }
+    catch {
+      // 兜底：宁可消息大一点也不丢图，体积交给落库时的 MAX_META_IMAGE_CHARS 收口
+      images = raw
+    }
+  }
+
   addChat(
     +uuid,
     {
@@ -510,11 +528,11 @@ async function onConversation() {
       error: false,
       conversationOptions: null,
       requestOptions: { prompt: message, options: null },
+      ...(images?.length ? { images } : {}),
     },
   )
   scrollToBottom()
 
-  loading.value = true
   prompt.value = ''
 
   // 提交用的 content：带图时是分片数组，否则就是原始字符串 ——
@@ -1128,6 +1146,7 @@ onUnmounted(() => {
                   :agent-steps="item.agentSteps"
                   :agent-stalled="item.agentStalled"
                   :usage="item.usage"
+                  :images="item.images"
                   :data-message-index="index"
                   :highlighted="index === highlightIndex"
                   @regenerate="onRegenerate(index)" @retry="handleAgentRetry(index)" @delete="handleDelete(index)"

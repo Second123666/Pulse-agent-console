@@ -21,6 +21,11 @@ interface Props {
   agentStalled?: boolean
   /** 本轮的 token 用量与耗时（仅 Agent 模式） */
   usage?: Chat.AgentUsage
+  /**
+   * 本条消息附带的图片（13.3）。元素要么是缩略图 data URL，
+   * 要么是落库时体积超限留下的文字占位 —— 模板按前缀分辨
+   */
+  images?: string[]
   /** 会话搜索跳转过来时闪一下，帮用户在同屏多条消息里定位命中项 */
   highlighted?: boolean
 }
@@ -47,6 +52,13 @@ const { iconRender } = useIconRender()
 const message = useMessage()
 
 const textRef = ref<HTMLElement>()
+
+/** 附件渲染项：「是图还是文字占位」在这里算好，模板里不再重复做前缀判断 */
+const imageItems = computed(() => (props.images ?? []).map((src, index) => ({
+  key: index,
+  isImage: src.startsWith('data:image'),
+  src,
+})))
 
 const asRawText = ref(props.inversion)
 
@@ -159,6 +171,25 @@ async function handleCopy() {
       </p>
       <div class="flex items-end gap-1 mt-2" :class="[inversion ? 'flex-row-reverse' : 'flex-row']">
         <div class="flex flex-col">
+          <!-- 附件图片：直接 <img> 渲染，**不进 markdown** —— Text.vue 的 `html: false` 是 XSS 面，一个字都不动 -->
+          <div
+            v-if="imageItems.length"
+            class="flex flex-wrap gap-2 mb-1"
+            :class="[inversion ? 'justify-end' : 'justify-start']"
+          >
+            <template v-for="item in imageItems" :key="item.key">
+              <img
+                v-if="item.isImage"
+                :src="item.src" :alt="t('chat.imageAlt')"
+                class="object-cover w-24 h-24 rounded-lg border border-[var(--agent-hairline)]"
+              >
+              <!-- 落库时体积超限的那几张：只留一行说明，不塞半张图 -->
+              <span
+                v-else
+                class="flex items-center max-w-[16rem] px-2 py-1 text-xs rounded border border-[var(--agent-hairline)] text-[var(--agent-text-dim)]"
+              >{{ item.src }}</span>
+            </template>
+          </div>
           <TextComponent
             ref="textRef" :inversion="inversion" :error="error" :text="text" :loading="loading"
             :as-raw-text="asRawText"

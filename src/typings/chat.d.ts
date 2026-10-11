@@ -42,6 +42,15 @@ declare namespace Chat {
 		agentStalled?: boolean
 		/** 本轮的 token 用量与耗时（仅 Agent 模式，随 answer 事件带回） */
 		usage?: AgentUsage
+		/**
+		 * 本条消息附带的图片（13.3）。元素有两种形态，渲染时按前缀分辨：
+		 * - `data:image/...` —— 缩略图，直接 `<img>` 显示
+		 * - 其它文本 —— 落库时体积超限留下的文字占位（原图没存下来）
+		 *
+		 * **只进内存与服务端 meta，不进 localStorage**（见 `chat/helper.ts` 的 `setLocalState`）：
+		 * 刷新后由 `hydrateFromServer` 从 `meta.images` 恢复
+		 */
+		images?: string[]
 		conversationOptions?: ConversationRequest | null
 		requestOptions: { prompt: string; options?: ConversationRequest | null }
 	}

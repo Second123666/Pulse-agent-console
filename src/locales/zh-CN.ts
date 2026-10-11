@@ -76,6 +76,8 @@ export default {
     imageReadError: '图片读取失败，换一张试试',
     imageTooLarge: '图片压缩后仍超限：{size}（上限 {max}）',
     imagesTotalTooLarge: '图片总大小超限，请减少图片数量后重试',
+    imageAlt: '图片附件',
+    imageOmitted: '图片因体积超限未保存（{size}）',
   },
   setting: {
     setting: '设置',

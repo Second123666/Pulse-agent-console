@@ -54,6 +54,8 @@ export default {
     imageReadError: '이미지를 읽지 못했습니다. 다른 이미지를 시도하세요',
     imageTooLarge: '압축 후에도 이미지가 너무 큽니다: {size} (상한 {max})',
     imagesTotalTooLarge: '이미지 합계가 한도를 초과했습니다. 더 적게 또는 더 작게 보내세요',
+    imageAlt: '첨부 이미지',
+    imageOmitted: '이미지가 크기 제한을 초과해 저장되지 않았습니다 ({size})',
   },
   setting: {
     setting: '설정',
