@@ -39,6 +39,12 @@
 		&-wrapper {
 			position: relative;
 			padding-top: 28px;
+
+			// 默认半透明、鼠标进入代码块时完全显形：平时不抢正文视线，要用时一眼能找到。
+			// （此前是 11px 灰字、只有 hover 到按钮本身才变色，用户实测「没注意到它存在」）
+			&:hover .code-block-header__copy {
+				opacity: 1;
+			}
 		}
 
 		&-header {
@@ -51,7 +57,8 @@
 			display: flex;
 			justify-content: space-between;
 			align-items: center;
-			flex-direction: row-reverse;
+			// 不反转：语言标记在左、复制按钮在右 —— 右上角是 GitHub / VS Code / ChatGPT 的通用位置，
+			// 而本次改造的目的正是可发现性，位置反着放会削弱这个效果
 			border-bottom: 1px solid var(--agent-hairline, #e4e4de);
 			color: var(--agent-text-dim, #8a8f98);
 			font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -62,12 +69,31 @@
 			}
 
 			&__copy {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.3rem;
+				padding: 0.15rem 0.4rem;
+				margin-right: -0.4rem;
+				// 这是个 <button>：清掉浏览器默认样式，让它看起来仍是那行等宽小字
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: 0;
+				border-radius: 0.25rem;
 				cursor: pointer;
 				user-select: none;
-				transition: color 120ms ease;
+				// 常驻半透明（不是隐藏）：一眼能看见有这么个东西，但不抢正文视线
+				opacity: 0.55;
+				transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+
+				&-icon {
+					flex-shrink: 0;
+				}
 
 				&:hover {
+					opacity: 1;
 					color: var(--agent-accent, #0d9488);
+					background: var(--agent-accent-soft, rgba(13, 148, 136, 0.1));
 				}
 			}
 		}
