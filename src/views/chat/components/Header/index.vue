@@ -9,7 +9,6 @@ interface Props {
 }
 
 interface Emit {
-  (ev: 'export'): void
   (ev: 'handleClear'): void
 }
 
@@ -32,10 +31,6 @@ function onScrollToTop() {
   const scrollRef = document.querySelector('#scrollRef')
   if (scrollRef)
     nextTick(() => scrollRef.scrollTop = 0)
-}
-
-function handleExport() {
-  emit('export')
 }
 
 function handleClear() {
@@ -72,11 +67,6 @@ function handleAgentModeChange(value: boolean) {
           <span class="text-xs text-[#4f555e] dark:text-neutral-400">Agent</span>
           <NSwitch size="small" :value="settingStore.agentMode" @update:value="handleAgentModeChange" />
         </div>
-        <HoverButton @click="handleExport">
-          <span class="text-xl text-[#4f555e] dark:text-white">
-            <SvgIcon icon="ri:download-2-line" />
-          </span>
-        </HoverButton>
         <HoverButton @click="handleClear">
           <span class="text-xl text-[#4f555e] dark:text-white">
             <SvgIcon icon="ri:delete-bin-line" />
