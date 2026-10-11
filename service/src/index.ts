@@ -9,6 +9,7 @@ import { requireAuth } from './middleware/auth'
 import { authRouter } from './auth/routes'
 import { conversationRouter } from './conversation/routes'
 import { usageRouter } from './usage/routes'
+import { knowledgeRouter } from './knowledge/routes'
 import { recordUsage } from './usage/store'
 import { getJwtSecret } from './auth/secret'
 import { getDb } from './store/db'
@@ -347,6 +348,9 @@ app.use('/api', conversationRouter)
 // 用量汇总：同样全量 requireAuth，同样挂在主 router 之后（前缀 /usage/* 与其余不重叠）
 app.use('', usageRouter)
 app.use('/api', usageRouter)
+// 知识库：全量 requireAuth（知识库按 user_id 隔离），挂在主 router 之后
+app.use('', knowledgeRouter)
+app.use('/api', knowledgeRouter)
 app.set('trust proxy', 1)
 
 // 鉴权自检：数据库可用性与鉴权模式在启动时明确打出，避免运行中才发现配置问题

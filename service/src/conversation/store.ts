@@ -227,7 +227,7 @@ function escapeLike(value: string): string {
  * 与 JS 的差异只可能出现在非 ASCII 的大小写对上，那时这里会走兜底分支（不高亮），
  * 不影响「搜到了哪条」的正确性。
  */
-function buildSnippet(content: string, query: string): { snippet: string, matchStart: number, matchEnd: number } {
+function buildSnippet(content: string, query: string): { snippet: string; matchStart: number; matchEnd: number } {
   // 折叠所有空白：正文里的换行会把片段撑成多行，面板里显示不下
   const flat = content.replace(/\s+/g, ' ').trim()
   const index = flat.toLowerCase().indexOf(query.toLowerCase())
