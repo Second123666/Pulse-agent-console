@@ -30,6 +30,12 @@ declare namespace Chat {
 	}
 
 	interface Chat {
+		/**
+		 * 渲染用稳定 id（14.1）：虚拟列表的 key 用它，**不能用下标** ——
+		 * 下标会在删除中间消息后整体前移，让高度缓存认错人（错位直到重新测量）。
+		 * 只在内存里生成，**不进服务端 meta**：刷新后整体水合，key 全换一遍无所谓
+		 */
+		id?: string
 		dateTime: string
 		text: string
 		inversion?: boolean

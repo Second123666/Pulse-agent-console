@@ -3,6 +3,8 @@ import type { Ref } from 'vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NDropdown, NInput, useDialog, useMessage } from 'naive-ui'
+import type { VVirtualListInst } from 'vueuc'
+import { VVirtualList } from 'vueuc'
 import { Message } from './components'
 import EmptyState from './components/EmptyState/index.vue'
 import { useScroll } from './hooks/useScroll'
@@ -68,12 +70,53 @@ const settingStore = useSettingStore()
 
 const { isMobile } = useBasicLayout()
 const { addChat, updateChat, updateChatSome, getChatByUuidAndIndex } = useChat()
-const { scrollRef, scrollToBottom, scrollToBottomIfAtBottom } = useScroll()
+
+/**
+ * 虚拟列表实例（14.1）：滚动语义统一由它接管（见 useScroll）。
+ * 消息高度随内容与流式输出持续变化，所以开 `item-resizable` 动态测量，
+ * `itemSize` 只作为**未测量项的初始估算**（测量到真实高度后即被替换）
+ */
+const virtualListRef = ref<VVirtualListInst | null>(null)
+const { scrollToBottom, scrollToTop, scrollToBottomIfAtBottom } = useScroll(virtualListRef)
+
+/** 未测量消息的估算高度（px）：只影响首屏与跳转时的位置推算 */
+const MESSAGE_ITEM_SIZE = 120
+
 const { usingContext, toggleUsingContext } = useUsingContext()
 
 const { uuid } = route.params as { uuid: string }
 
 const dataSources = computed(() => chatStore.getChatByUuid(+uuid))
+
+/**
+ * 虚拟列表的 items。
+ * **key 用消息 id，不能用下标** —— 下标在删除中间消息后整体前移，
+ * 而高度缓存是按 key 记的，会把旧高度安到别的消息上（滚动位置错乱）。
+ * `message` 一并带上，模板里就不用再按下标回查 dataSources
+ */
+const messageItems = computed(() => dataSources.value.map((message, index) => ({
+  key: message.id ?? `m-${index}`,
+  index,
+  message,
+})))
+
+/**
+ * 首帧贴底：虚拟列表挂载时还不知道自己的高度（等 ResizeObserver 首次回调），
+ * 此时 scrollTo 会被钳在 0 —— 直接调 scrollToBottom 会让会话停在最旧一条。
+ * 这里记下「测量完要贴底」的意图，列表首次 resize（拿到高度、开始渲染可见项）时兑现一次
+ */
+let stickBottomOnFirstResize = false
+async function handleVirtualListResize() {
+  if (!stickBottomOnFirstResize)
+    return
+  stickBottomOnFirstResize = false
+  await scrollToBottom()
+}
+
+/** 双击标题回顶（14.1 起走虚拟列表的滚动 API，直接写 scrollTop 会绕过它的位置推算） */
+async function handleScrollTop() {
+  await scrollToTop()
+}
 // 上下文链选取：取全部助手消息，而非只取带 conversationOptions 的。
 // 旧过滤会把 Agent 消息（conversationOptions 为 null）排除在外，导致 lastContext 跳过 Agent 轮次、
 // 错接到更早的普通轮次；现在取最近一条助手消息 —— 若它是 Agent 消息则 conversationOptions 为 null，
@@ -1088,8 +1131,20 @@ async function tryJumpToPending() {
     return
 
   await nextTick()
-  // 下标已校验为整数，拼进选择器无注入风险；限定在滚动容器内，避免命中面板等同名节点
-  const el = document.querySelector(`#scrollRef [data-message-index="${target.index}"]`)
+
+  // 下标越界（会话被删 / 消息被删）：直接放弃，免得空转 20 次
+  if (target.index < 0 || target.index >= dataSources.value.length) {
+    jumpAttempts = 0
+    clearPendingJump()
+    return
+  }
+
+  // 14.1：目标项很可能**不在 DOM 里**（虚拟列表只渲染视口附近）——
+  // 先让列表把它滚进视口，再谈定位与高亮。重试语义随之从「等 DOM 出现」变成「等列表渲染出目标项」
+  virtualListRef.value?.scrollTo({ index: target.index })
+
+  // 下标已校验为整数，拼进选择器无注入风险
+  const el = document.querySelector(`[data-message-index="${target.index}"]`)
   if (!el) {
     if (++jumpAttempts < 20) {
       setTimeout(tryJumpToPending, 150)
@@ -1103,6 +1158,7 @@ async function tryJumpToPending() {
 
   jumpAttempts = 0
   clearPendingJump()
+  // 列表只保证「滚进视口」，居中还得自己来；此刻目标已在视口边缘，这步位移很小
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   flashMessage(target.index)
 }
@@ -1116,6 +1172,8 @@ watch(dataSources, () => {
 })
 
 onMounted(() => {
+  // 列表这时还没测量出高度（等 ResizeObserver 首次回调），先记意图，由 handleVirtualListResize 兑现
+  stickBottomOnFirstResize = true
   scrollToBottom()
   if (inputRef.value && !isMobile.value)
     inputRef.value?.focus()
@@ -1138,40 +1196,58 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col w-full h-full">
-    <HeaderComponent v-if="isMobile" :using-context="usingContext" @export="handleExport" @handle-clear="handleClear" />
-    <main class="flex-1 overflow-hidden">
-      <div id="scrollRef" ref="scrollRef" class="h-full overflow-hidden overflow-y-auto">
-        <div class="w-full max-w-screen-xl m-auto dark:bg-[#101014]" :class="[isMobile ? 'p-2' : 'p-4']">
-          <div class="relative">
-            <template v-if="!dataSources.length">
-              <EmptyState @select="handleExampleSelect" />
-            </template>
-            <template v-else>
-              <div>
-                <Message
-                  v-for="(item, index) of dataSources" :key="index" :date-time="item.dateTime" :text="item.text"
-                  :inversion="item.inversion" :error="item.error" :loading="item.loading" :quote="item.quote"
-                  :agent-steps="item.agentSteps"
-                  :agent-stalled="item.agentStalled"
-                  :usage="item.usage"
-                  :images="item.images"
-                  :data-message-index="index"
-                  :highlighted="index === highlightIndex"
-                  @regenerate="onRegenerate(index)" @retry="handleAgentRetry(index)" @delete="handleDelete(index)"
-                  @reply="handleReply" @speak="speakText" @approve="handleApprove"
-                />
-                <div class="sticky bottom-0 left-0 flex justify-center">
-                  <NButton v-if="loading" type="warning" @click="handleStop">
-                    <template #icon>
-                      <SvgIcon icon="ri:stop-circle-line" />
-                    </template>
-                    {{ t('common.stopResponding') }}
-                  </NButton>
-                </div>
-              </div>
-            </template>
+    <HeaderComponent
+      v-if="isMobile" :using-context="usingContext"
+      @export="handleExport" @handle-clear="handleClear" @scroll-top="handleScrollTop"
+    />
+    <main class="relative flex-1 overflow-hidden">
+      <template v-if="!dataSources.length">
+        <EmptyState @select="handleExampleSelect" />
+      </template>
+      <!--
+        虚拟列表（14.1）：只有视口附近的消息在 DOM 里。
+        - `item-resizable`：消息高度随内容与流式输出持续变化，固定 itemSize 必然错位，必须动态测量
+        - 列表自己就是滚动容器（高度由外层 h-full 给定）；横向留白放在每条消息上，
+          这样内容居中而滚动条仍在窗口最右侧（与改造前观感一致）
+      -->
+      <VVirtualList
+        v-else
+        ref="virtualListRef"
+        class="h-full dark:bg-[#101014]"
+        :items="messageItems"
+        :item-size="MESSAGE_ITEM_SIZE"
+        item-resizable
+        :padding-top="isMobile ? 8 : 16"
+        :padding-bottom="isMobile ? 8 : 16"
+        @resize="handleVirtualListResize"
+      >
+        <template #default="{ item }">
+          <div class="w-full max-w-screen-xl m-auto" :class="[isMobile ? 'px-2' : 'px-4']">
+            <Message
+              :date-time="item.message.dateTime" :text="item.message.text"
+              :inversion="item.message.inversion" :error="item.message.error" :loading="item.message.loading"
+              :quote="item.message.quote"
+              :agent-steps="item.message.agentSteps"
+              :agent-stalled="item.message.agentStalled"
+              :usage="item.message.usage"
+              :images="item.message.images"
+              :data-message-index="item.index"
+              :highlighted="item.index === highlightIndex"
+              @regenerate="onRegenerate(item.index)" @retry="handleAgentRetry(item.index)"
+              @delete="handleDelete(item.index)"
+              @reply="handleReply" @speak="speakText" @approve="handleApprove"
+            />
           </div>
-        </div>
+        </template>
+      </VVirtualList>
+      <!-- 停止按钮：虚拟列表内部是绝对定位的复用节点，`sticky` 在里面不成立 —— 改为浮在容器底部 -->
+      <div v-if="loading" class="absolute bottom-4 left-0 right-0 z-10 flex justify-center pointer-events-none">
+        <NButton class="pointer-events-auto" type="warning" @click="handleStop">
+          <template #icon>
+            <SvgIcon icon="ri:stop-circle-line" />
+          </template>
+          {{ t('common.stopResponding') }}
+        </NButton>
       </div>
     </main>
     <footer :class="footerClass">

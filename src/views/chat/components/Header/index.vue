@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, nextTick } from 'vue'
+import { computed } from 'vue'
 import { NDropdown, NSwitch } from 'naive-ui'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useAppStore, useChatStore, useSettingStore } from '@/store'
@@ -11,6 +11,8 @@ interface Props {
 interface Emit {
   (ev: 'export', format: 'markdown' | 'plain'): void
   (ev: 'handleClear'): void
+  /** 双击标题回顶（14.1）：滚动容器归 Chat 视图的虚拟列表管，这里只发意图 */
+  (ev: 'scrollTop'): void
 }
 
 defineProps<Props>()
@@ -29,9 +31,7 @@ function handleUpdateCollapsed() {
 }
 
 function onScrollToTop() {
-  const scrollRef = document.querySelector('#scrollRef')
-  if (scrollRef)
-    nextTick(() => scrollRef.scrollTop = 0)
+  emit('scrollTop')
 }
 
 /** 导出格式选项（与桌面端一致；文案硬编码，不新增 i18n 键） */

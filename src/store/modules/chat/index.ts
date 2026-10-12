@@ -51,6 +51,27 @@ function clipImages(images: string[]): string[] {
   return out
 }
 
+/**
+ * 14.1：消息的渲染 id 序号。
+ *
+ * 虚拟列表拿 `key` 当身份（高度缓存 `keyToHeightOffset` 按 key 记），用下标当 key 会在
+ * 「删掉中间一条」之后让后面所有消息整体前移 —— 高度缓存认错人，滚动位置错乱。
+ * 序号 + 时间戳足够在单次会话内唯一，不必上 uuid（这里每帧都可能分配，越便宜越好）
+ */
+let messageIdSeq = 0
+function nextMessageId(): string {
+  messageIdSeq += 1
+  return `m${messageIdSeq}-${Date.now().toString(36)}`
+}
+
+/**
+ * 整体替换消息（updateChatByUuid）时保住它的渲染 id。
+ * 流式渲染每帧都走这条路径，丢了 id 等于每帧换 key —— 虚拟列表会把整条消息重挂载
+ */
+function keepMessageId(prev: Chat.Chat | undefined, next: Chat.Chat): Chat.Chat {
+  return (prev?.id && !next.id) ? { ...next, id: prev.id } : next
+}
+
 /** 前端消息 → 服务端消息。loading / agentStalled 属瞬时态，不入库（否则刷新后永久转圈） */
 function toServerMessage(item: Chat.Chat): ServerMessage {
   return {
@@ -222,27 +243,30 @@ export const useChatStore = defineStore('chat-store', {
     },
 
     addChatByUuid(uuid: number, chat: Chat.Chat) {
+      // 14.1：所有新消息在这里统一拿渲染 id（虚拟列表的 key），下面三处 push 都推它
+      const message: Chat.Chat = chat.id ? chat : { ...chat, id: nextMessageId() }
+
       if (!uuid || uuid === 0) {
         if (this.history.length === 0) {
           const uuid = Date.now()
-          this.history.push({ uuid, title: chat.text, isEdit: false })
-          this.chat.push({ uuid, data: [chat] })
+          this.history.push({ uuid, title: message.text, isEdit: false })
+          this.chat.push({ uuid, data: [message] })
           this.active = uuid
           this.recordState()
         }
         else {
-          this.chat[0].data.push(chat)
+          this.chat[0].data.push(message)
           if (this.history[0].title === t('chat.newChatTitle'))
-            this.history[0].title = chat.text
+            this.history[0].title = message.text
           this.recordState()
         }
       }
 
       const index = this.chat.findIndex(item => item.uuid === uuid)
       if (index !== -1) {
-        this.chat[index].data.push(chat)
+        this.chat[index].data.push(message)
         if (this.history[index].title === t('chat.newChatTitle'))
-          this.history[index].title = chat.text
+          this.history[index].title = message.text
         this.recordState()
       }
     },
@@ -250,7 +274,7 @@ export const useChatStore = defineStore('chat-store', {
     updateChatByUuid(uuid: number, index: number, chat: Chat.Chat) {
       if (!uuid || uuid === 0) {
         if (this.chat.length) {
-          this.chat[0].data[index] = chat
+          this.chat[0].data[index] = keepMessageId(this.chat[0].data[index], chat)
           this.recordState()
         }
         return
@@ -258,7 +282,7 @@ export const useChatStore = defineStore('chat-store', {
 
       const chatIndex = this.chat.findIndex(item => item.uuid === uuid)
       if (chatIndex !== -1) {
-        this.chat[chatIndex].data[index] = chat
+        this.chat[chatIndex].data[index] = keepMessageId(this.chat[chatIndex].data[index], chat)
         this.recordState()
       }
     },
@@ -379,7 +403,11 @@ export const useChatStore = defineStore('chat-store', {
         const getResult = await fetchConversationGet()
         const conversations = getResult.data.conversations
         this.history = conversations.map(item => ({ uuid: item.uuid, title: item.title, isEdit: false }))
-        this.chat = conversations.map(item => ({ uuid: item.uuid, data: item.messages.map(toLocalMessage) }))
+        // 14.1：水合出来的消息也补渲染 id（虚拟列表的 key 不能是下标）
+        this.chat = conversations.map(item => ({
+          uuid: item.uuid,
+          data: item.messages.map(message => ({ ...toLocalMessage(message), id: nextMessageId() })),
+        }))
         this.active = (preferredUuid !== undefined && this.history.some(item => item.uuid === preferredUuid))
           ? preferredUuid
           : (this.history[0]?.uuid ?? null)
