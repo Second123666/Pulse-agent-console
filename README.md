@@ -188,7 +188,7 @@ docker compose up -d --build
 - **密钥不进镜像**：`.env` 走 `env_file` 注入；两个 `.dockerignore` 都排除了它
 - **CI**：`.github/workflows/ci.yml` 三个 job —— 前端（type-check/lint/build）、后端（type-check/lint/test/**打包产物启动冒烟**）、镜像构建
 
-> 注：开发机没装 Docker，两个镜像的构建由 CI 的 `docker` job 兜底验证。
+> ⚠️ **未验证声明**：两个镜像**从未在开发机上构建过**（本机没装 Docker），compose 也没起过。CI 里有 `docker` job 会在 push 后构建它们，跑没跑、过没过以仓库 Actions 页面为准。除 Docker 外的链路（`pnpm build` → `node build/index.mjs` → `/session` 探活）都已本地实测。
 
 ## 配置说明
 
