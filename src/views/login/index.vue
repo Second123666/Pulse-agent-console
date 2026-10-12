@@ -129,6 +129,26 @@ onMounted(async () => {
 
 <template>
   <div class="auth-page">
+    <!--
+      背景：同一台仪器的**其它通道在空转** —— 极淡的方格场 + 两条缓慢漂移的轨迹 + 一点辉光。
+      刻意不用照片：这个页面的语言是发丝线与方格，摄影图会把它们全压住，
+      而且亮/暗两套还得各配一层遮罩。这里全是 CSS + 内联 SVG，零素材、跟着令牌自动换色
+    -->
+    <div class="backdrop" aria-hidden="true">
+      <svg class="backdrop__trace backdrop__trace--a" viewBox="0 0 1200 160" preserveAspectRatio="none" fill="none">
+        <path
+          d="M0 80 H180 L200 40 L230 130 L250 60 L270 80 H420 L445 30 L470 120 L490 70 H640 L665 45 L690 110 L710 80 H900 L925 55 L950 100 H1200"
+          vector-effect="non-scaling-stroke"
+        />
+      </svg>
+      <svg class="backdrop__trace backdrop__trace--b" viewBox="0 0 1200 160" preserveAspectRatio="none" fill="none">
+        <path
+          d="M0 80 H300 L330 50 L360 115 L390 80 H700 L730 40 L760 125 L790 80 H1100 L1130 60 L1160 95 H1200"
+          vector-effect="non-scaling-stroke"
+        />
+      </svg>
+    </div>
+
     <div class="auth-column">
       <!-- 仪表：一条与产品同源的脉搏线。连通时画到底、末端呼吸；不通就断在半途 -->
       <div class="scope" :class="`scope--${backendState}`">
@@ -251,15 +271,77 @@ onMounted(async () => {
 
 <style scoped lang="less">
 .auth-page {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100%;
   padding: 40px 16px;
+  overflow: hidden; // 漂移的轨迹超出视口，不裁会出滚动条
   background: var(--agent-bg);
 }
 
+// ---- 背景：其它通道在空转 ----
+.backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+
+  // 方格场：把仪表屏的网格延伸到整页，向外圈淡出（免得整页像坐标纸）
+  &::before {
+    content: '';
+    position: absolute;
+    inset: -12%;
+    z-index: 0;
+    background-image:
+      repeating-linear-gradient(to right, var(--agent-hairline) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(to bottom, var(--agent-hairline) 0 1px, transparent 1px 34px);
+    mask-image: radial-gradient(ellipse 68% 58% at 50% 46%, #000 18%, transparent 76%);
+    opacity: 0.55;
+  }
+
+  // 辉光：面板背后一点点信号青，让它在纸面/墨底上「亮」起来
+  &::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 46%;
+    z-index: 2;
+    width: 620px;
+    height: 620px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, var(--agent-accent-soft), transparent 60%);
+    opacity: 0.7;
+  }
+
+  // 远端的通道：扁、淡、慢。高度压到 90px 是为了把 viewBox 里的尖峰在纵向压扁 ——
+  // 不压的话它们是两排山，会跟主角那条脉搏线抢注意力
+  &__trace {
+    position: absolute;
+    z-index: 1;
+    width: 150%;
+    height: 90px;
+    stroke: var(--agent-accent);
+    stroke-width: 1.5;
+    opacity: 0.08;
+
+    &--a {
+      top: 9%;
+      left: -25%;
+      animation: drift-a 96s ease-in-out infinite alternate;
+    }
+
+    &--b {
+      right: -25%;
+      bottom: 7%;
+      animation: drift-b 132s ease-in-out infinite alternate;
+    }
+  }
+}
+
 .auth-column {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 420px;
   // 整台机器一起进场（屏与机身同动，否则进场时两者会裂开）
@@ -470,6 +552,19 @@ html.dark .scope {
   }
 }
 
+// 背景轨迹的漂移：一往一返（alternate），不是匀速循环 —— 匀速会有一个肉眼可见的接缝
+@keyframes drift-a {
+  to {
+    transform: translate3d(-5%, 0, 0);
+  }
+}
+
+@keyframes drift-b {
+  to {
+    transform: translate3d(4%, 0, 0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .scope__line {
     animation: none;
@@ -487,6 +582,10 @@ html.dark .scope {
   }
 
   .auth-column {
+    animation: none;
+  }
+
+  .backdrop__trace {
     animation: none;
   }
 
