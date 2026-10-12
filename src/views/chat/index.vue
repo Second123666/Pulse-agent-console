@@ -1139,6 +1139,11 @@ async function tryJumpToPending() {
     return
   }
 
+  // 14.2：跳转优先于「首帧贴底」。跨会话跳转时两者会撞在一起：贴底要等 ResizeObserver
+  // 首次回调（见 handleVirtualListResize）才真正执行，晚于这里，会把跳转滚到的位置顶掉。
+  // 清掉这个意图，等于声明「本次挂载的定位由跳转说了算」
+  stickBottomOnFirstResize = false
+
   // 14.1：目标项很可能**不在 DOM 里**（虚拟列表只渲染视口附近）——
   // 先让列表把它滚进视口，再谈定位与高亮。重试语义随之从「等 DOM 出现」变成「等列表渲染出目标项」
   virtualListRef.value?.scrollTo({ index: target.index })
@@ -1158,9 +1163,32 @@ async function tryJumpToPending() {
 
   jumpAttempts = 0
   clearPendingJump()
-  // 列表只保证「滚进视口」，居中还得自己来；此刻目标已在视口边缘，这步位移很小
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  centerMessage(target.index)
   flashMessage(target.index)
+}
+
+/**
+ * 把某条消息滚到视口中间（调用时它必须已在 DOM 里）。
+ *
+ * 不用 `el.scrollIntoView()`：那是绕过列表位置推算的原生滚动，而且平滑滚动期间
+ * 目标一旦被虚拟化卸载，动画就断了 —— 实测目标会停在视口边缘不居中。
+ * 这里按元素的实际位置算出目标 `top`，交给列表自己的 `scrollTo`
+ */
+function centerMessage(index: number) {
+  const align = () => {
+    const listEl = virtualListRef.value?.listElRef
+    const el = document.querySelector<HTMLElement>(`[data-message-index="${index}"]`)
+    if (!listEl || !el)
+      return
+    const listRect = listEl.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    // 元素顶部在「内容坐标系」里的位置 = 相对视口的偏移 + 已滚过的距离
+    const offsetInContent = (elRect.top - listRect.top) + listEl.scrollTop
+    virtualListRef.value?.scrollTo({ top: Math.max(0, offsetInContent - (listEl.clientHeight - elRect.height) / 2) })
+  }
+  align()
+  // 滚过去之后，途经的消息才第一次被测量，真实高度与估算值的差会把内容顶偏 —— 下一帧按修正后的位置再对一次
+  requestAnimationFrame(align)
 }
 
 watch(pendingJumpTarget, () => {
