@@ -120,7 +120,9 @@ vite 遇到端口占用**会静默顺延**到 1003/1004，所以「页面打开�
 - **eslint（@antfu 配置）连 YAML 一起 lint**：新增 `.yml` 会被 `yml/quotes`（要单引号，端口这类无歧义的纯量直接写 `- 8080:80`）和 `yml/no-empty-mapping-value`（空值要写 `{}`，如 `pull_request: {}`）拦下
 - **打包产物不能只验证「构建成功」**：esbuild 会把 `node:` 前缀统一剥掉，`node:crypto → crypto` 无妨，但 `node:sqlite → sqlite` 会变成 npm 包名 → **构建全绿、`node build/index.mjs` 启动即 `ERR_MODULE_NOT_FOUND`**（Dockerfile 的 CMD 就是它）。已在 `tsup.config.ts` 用 `external: ['node:sqlite']` 固定，CI 里也有打包产物启动冒烟兜底
 - **本机没装 Docker**：Dockerfile / compose 的改动无法在本地验证，只能靠 CI 的 `docker` job（push 后盯一眼）
-- **暗色样式不要写 `:global(html.dark) &`**：LESS 嵌套里 `&` 会被吞掉，编译成 `html.dark { ... }` —— 规则落在**根元素**上，背景纹丝不动；更糟的是 `filter` 落到根元素会给所有 fixed 后代造 containing block，暗色下布局可能整体错位。一律写顶层 `html.dark .x`（`html.dark .signal-scene` / `html.dark .scope` 就是这个写法）。**lint 和类型检查都发现不了**，只有在暗色下真渲染一次才看得见
+- **样式会被静默丢弃，lint 与 `vue-tsc` 全绿也照样丢** —— 两个已踩过的坑，改完样式务必去浏览器里看一眼**计算值**，别只看截图（肉眼会被其它因素盖住）：
+  1. **暗色别写 `:global(html.dark) &`**：LESS 嵌套里 `&` 会被吞掉，编译成 `html.dark { ... }` —— 规则落在**根元素**上，背景纹丝不动；更糟的是 `filter` 落到根元素会给所有 fixed 后代造 containing block，暗色下布局可能整体错位。一律写顶层 `html.dark .x`（`html.dark .signal-scene` / `html.dark .scope` 就是这个写法）
+  2. **`<style scoped>` 没写 `lang="less"` 时不能嵌套**：`&--x` 在纯 CSS 里是非法语法，**整段规则被丢掉**（BrandLogo 踩过：`border-radius` 失效，而母版 PNG 自带透明圆角恰好把它盖住了，截图上看不出任何异常）
 
 ### 护栏（来自 workflow.md）
 
