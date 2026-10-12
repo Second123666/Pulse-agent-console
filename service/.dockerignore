@@ -1,0 +1,6 @@
+# 构建上下文是 service/ —— 这里排除的东西不会进镜像
+node_modules
+build
+data
+.env
+*.log

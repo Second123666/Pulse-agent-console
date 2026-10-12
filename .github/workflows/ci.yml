@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  web:
+    name: 前端 · type-check / lint / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm type-check
+      - run: pnpm lint
+      # build-only 而不是 build：type-check 上一步已经单独跑过了
+      - run: pnpm build-only
+
+  service:
+    name: 后端 · type-check / lint / test / build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # service/.npmrc 的 store-dir 指向 Windows 沙箱路径（D:/test/.pnpm-store），
+      # Linux 上必须用 --store-dir 覆盖；一旦覆盖，setup-node 的 cache: pnpm
+      # 就对不上真实 store 目录了，所以这里用 actions/cache 手动缓存
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('service/pnpm-lock.yaml') }}
+
+      - run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
+      - run: pnpm type-check
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+      # 打包产物冒烟：Dockerfile 的 CMD 就是 node build/index.mjs，
+      # 光构建成功不够 —— esbuild 曾把 node:sqlite 剥成 sqlite，构建全绿但启动即挂
+      - name: 冒烟 · 打包产物能启动
+        run: |
+          node build/index.mjs &
+          SVC_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf -X POST http://127.0.0.1:3002/session > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf -X POST http://127.0.0.1:3002/session | grep -q '"status":"Success"'
+          kill $SVC_PID
+
+  docker:
+    name: 镜像构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 两个镜像都能构建出来（不推送）。本地开发机不一定有 Docker，
+      # 这个 job 是 Dockerfile 唯一的验证途径
+      - name: 后端镜像
+        run: docker build -t pulse-agent-console-service:ci ./service
+
+      - name: 前端镜像
+        run: docker build -t pulse-agent-console-web:ci .

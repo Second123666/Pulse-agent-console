@@ -11,7 +11,7 @@
     "express"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "scripts": {
     "start": "esno ./src/index.ts",

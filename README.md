@@ -2,7 +2,7 @@
 
 > 一个可调用工具的 Agent 化 AI 对话工作台 —— 基于 ChatGPT-Web 二次开发，为原版对话系统注入了 **ReAct 工具调用循环、RAG 知识库与 SSE 流式 Agent 交互**。
 
-[![Node](https://img.shields.io/badge/node-%3E%3D18-blue)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D24-blue)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-4.9-blue)](https://www.typescriptlang.org)
 [![Vue 3](https://img.shields.io/badge/Vue-3.2-42b883)](https://vuejs.org)
 [![Express](https://img.shields.io/badge/Express-4.18-green)](https://expressjs.com)
@@ -18,6 +18,7 @@
 - [RAG 知识库](#rag-知识库)
 - [技术亮点](#技术亮点)
 - [快速开始](#快速开始)
+- [部署（Docker）](#部署docker)
 - [配置说明](#配置说明)
 
 ## 项目简介
@@ -42,7 +43,7 @@ flowchart LR
     REG --> WEB[web_search]
     REG --> FILE[read_file]
     REG --> RAG[rag_search]
-    RAG --> VEC[(向量库 vectors.json)]
+    RAG --> VEC[(向量库 SQLite vectors 表)]
     RAG -.embedding 不可用.-> KW[关键词降级]
     LOOP -->|AgentEvent 流| SSE2[SSE 事件流]
     SSE2 --> CARD[ToolCallCard 步骤卡片]
@@ -128,7 +129,7 @@ register(myTool)
 
 - **切块**：markdown/txt 按标题与段落切分，500 字窗口 + 50 字重叠（`rag/chunk.ts`）
 - **向量化**：OpenAI 兼容 embeddings 接口，支持独立服务商配置（`EMBEDDING_API_BASE_URL` / `EMBEDDING_API_KEY`）
-- **存储**：余弦相似度 + 持久化到 `service/data/vectors.json`（gitignore）
+- **存储**：余弦相似度检索；向量持久化在 `service/data/agent.db` 的 `vectors` 表（SQLite，`node:sqlite` 内置模块，零依赖）。**多租户**：每块带 `user_id` 且走索引，检索只解码自己的块（早期版本是整文件覆写 `vectors.json`，所有租户摊在一个数组里）
 - **摄取**：把文档放进 `service/knowledge/`，执行 `cd service && pnpm ingest`
 - **检索**：`rag_search` 工具 top-3 召回并附来源；embedding 不可用时自动降级关键词匹配（中英分词计分）
 
@@ -140,10 +141,13 @@ register(myTool)
 - **安全工具执行**：calculator 自写递归下降解析器（杜绝 eval 注入）；read_file 路径白名单 + `..` 逃逸防护 + 100KB 限流
 - **多级容错**：工具异常错误文本回填自愈、步数/预算双熔断、embedding 失败关键词降级、前端 SSE 断流容错
 - **全链路可视化**：思考 / 工具调用 / 工具结果以控制台步骤流卡片（▎思考 / ├─▸ 工具）实时流式展示
-- **工程化完备**：vitest 单测（32 例覆盖循环熔断/工具/RAG）、type-check + eslint 全绿、conventional commits
+- **工程化完备**：vitest 单测 **256 例 / 26 文件**（覆盖 Agent 循环熔断、工具、RAG、鉴权、多模态降级、会话租户隔离）、type-check + eslint 全绿、GitHub Actions CI（含打包产物启动冒烟 + 镜像构建）、conventional commits
 - **零外部依赖核心链**：除 LLM 与搜索 API 外，Agent 循环、RAG、前端渲染全部自主实现
 
 ## 快速开始
+
+> **环境要求**：Node **≥ 24**（后端存储层用内置 `node:sqlite`）、pnpm 11。
+> 前端与后端是两个独立包，各自 `pnpm install`。
 
 ```bash
 # 1. 后端
@@ -152,7 +156,7 @@ cp .env.example .env   # 填入 API_KEY / OPENAI_API_BASE_URL / OPENAI_API_MODEL
 pnpm install
 pnpm start             # http://localhost:3002
 
-# 2. 前端（另开终端）
+# 2. 前端（另开终端，回到仓库根目录）
 pnpm install
 pnpm dev               # http://localhost:1002
 
@@ -162,6 +166,29 @@ pnpm ingest            # 扫描 service/knowledge/ 生成向量
 ```
 
 打开前端 → 点击底部**机器人图标**开启 Agent 模式 → 提问"现在几点？再算算 100 天后是几号"，即可看到 get_time + calculator 的多步工具调用。
+
+## 部署（Docker）
+
+不想装 Node、或者想直接跑生产形态，用 compose 一键起（前端 nginx 托管 + 后端 Express）：
+
+```bash
+cp service/.env.example service/.env   # 填 key；compose 会读这个文件
+docker compose up -d --build
+
+# 前端  http://localhost:8080
+# 后端  127.0.0.1:3002（只绑本机，方便直接 curl 调试）
+```
+
+细节：
+
+- **两个镜像**：根目录 `Dockerfile`（vite 构建 → `nginx:alpine`）、`service/Dockerfile`（tsup 打包 → `node:24-slim` 运行时）
+- **`/api` 反代**：nginx 把 `/api/*` 转发到后端容器并**剥掉 `/api` 前缀**，与开发环境 vite 代理的 rewrite 行为一致；SSE 已关 `proxy_buffering`，Agent 步骤流才能实时推
+- **数据持久化**：`./service/data`（SQLite：用户 / 会话 / 向量库）与 `./service/knowledge` 挂成卷，删容器不丢数据
+- **加知识库文档**：把文件丢进 `service/knowledge/`，然后 `docker compose exec service pnpm ingest`
+- **密钥不进镜像**：`.env` 走 `env_file` 注入；两个 `.dockerignore` 都排除了它
+- **CI**：`.github/workflows/ci.yml` 三个 job —— 前端（type-check/lint/build）、后端（type-check/lint/test/**打包产物启动冒烟**）、镜像构建
+
+> 注：开发机没装 Docker，两个镜像的构建由 CI 的 `docker` job 兜底验证。
 
 ## 配置说明
 
@@ -192,6 +219,11 @@ service/
     auth/         # 鉴权：password(scrypt) / jwt(手写 HS256) / users / routes
     store/        # 存储：node:sqlite 封装（Node 24 内置，零依赖）
     index.ts      # Express 服务：/chat-process 与 /agent-process
-    knowledge/    # 知识库文档（.md / .txt）
+  knowledge/      # 知识库文档（.md / .txt）
+  Dockerfile      # 后端镜像（tsup 打包 → node:24-slim 运行时）
 src/              # Vue 3 前端：聊天页、ToolCallCard、Header(Agent 开关)
+Dockerfile        # 前端镜像（vite 构建 → nginx:alpine）
+docker/nginx.conf # 反代 /api（剥前缀）+ SSE 关缓冲 + SPA 回退
+docker-compose.yml
+.github/workflows/ci.yml
 ```

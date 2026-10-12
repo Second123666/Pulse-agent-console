@@ -1,0 +1,39 @@
+# 一键起完整栈：docker compose up -d --build
+#
+#   前端  http://localhost:8080      （nginx 托管静态产物 + 反代 /api）
+#   后端  127.0.0.1:3002             （只绑本机，方便直接 curl 调试）
+#
+# 起之前先建好后端环境变量文件：cp service/.env.example service/.env 并填 key
+name: pulse-agent-console
+
+services:
+  service:
+    build:
+      context: ./service
+    image: pulse-agent-console-service:latest
+    env_file:
+      - ./service/.env
+    environment:
+      NODE_ENV: production
+    volumes:
+      # SQLite（用户 / 会话 / 向量库）持久化，删容器不丢数据
+      - ./service/data:/app/data
+      # 知识库文档；放新文件后执行 docker compose exec service pnpm ingest
+      - ./service/knowledge:/app/knowledge
+    ports:
+      - 127.0.0.1:3002:3002
+    restart: unless-stopped
+    # 探活用的是镜像里 Dockerfile 的 HEALTHCHECK（POST /session），
+    # 这里不重复定义；下面的 service_healthy 依赖的就是它
+
+  web:
+    build:
+      context: .
+    image: pulse-agent-console-web:latest
+    ports:
+      - 8080:80
+    depends_on:
+      # 等后端探活通过再起前端，避免首屏请求打空
+      service:
+        condition: service_healthy
+    restart: unless-stopped

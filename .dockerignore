@@ -1,0 +1,11 @@
+# 构建上下文是仓库根目录（前端镜像）
+node_modules
+dist
+.git
+.github
+.env
+*.log
+
+# 前端构建不需要后端：排掉它既能缩小上下文，也顺带保证
+# service/.env 里的密钥不会被 COPY . . 带进构建层
+service
