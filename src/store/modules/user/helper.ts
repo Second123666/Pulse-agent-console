@@ -1,3 +1,4 @@
+import secondAvatar from '@/assets/second.jpg'
 import { ss } from '@/utils/storage'
 
 const LOCAL_NAME = 'userStorage'
@@ -15,7 +16,9 @@ export interface UserState {
 export function defaultSetting(): UserState {
   return {
     userInfo: {
-      avatar: '/src/assets/second.jpg',
+      // 用 import 而不是写死 '/src/assets/...'：后者只在 dev server 下能解析，
+      // 生产构建里那个路径根本不存在，头像会 404
+      avatar: secondAvatar,
       name: 'Second',
       description: '',
     },
