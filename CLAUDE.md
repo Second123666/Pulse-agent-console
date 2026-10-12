@@ -63,7 +63,7 @@ tools/*.ts             calculator / getTime / webSearch / readFile / ragSearch
 
 ### RAG 链路
 
-`rag/chunk.ts`（切块，500 字 + 50 重叠）→ `rag/embed.ts`（向量化）→ `rag/store.ts`（内存 + JSON 持久化到 `service/data/vectors.json`，已 gitignore）→ 作为 `tools/ragSearch.ts` 接入。
+`rag/chunk.ts`（切块，500 字 + 50 重叠）→ `rag/embed.ts`（向量化）→ `rag/store.ts`（**SQLite**：`service/data/agent.db` 的 `vectors` 表，**每块必带 `user_id`** 且走索引，检索只解码自己的块）→ 作为 `tools/ragSearch.ts` 接入。早期版本是「内存数组 + 整文件覆写 `vectors.json`」，12.5 已迁移（旧的 `vectors.json` 会自动改名 `.imported`）。
 
 embedding 不可用时（缺 key / 接口失败）自动降级为关键词匹配，不抛错。
 
@@ -81,9 +81,11 @@ embedding 不可用时（缺 key / 接口失败）自动降级为关键词匹配
 
 ### 根 `.env` 必须存在（新克隆必丢）
 
-被根 `.gitignore` 忽略，所以重新拉代码后会消失。缺了它 `VITE_GLOB_API_URL` 为 `undefined` → axios 不带 `/api` 前缀 → 请求打到 `/session` 而非 `/api/session` → vite 代理只匹配 `/api` → **404 → 前端跳 `/500`**。
+被根 `.gitignore` 忽略，所以重新拉代码后会消失 —— 现在有入库的 `.env.example`，`cp .env.example .env` 即可补齐。缺了它 `VITE_GLOB_API_URL` 为 `undefined` → axios 不带 `/api` 前缀 → 请求打到 `/session` 而非 `/api/session` → vite 代理只匹配 `/api` → **404 → 前端跳 `/500`**。
 
 四个变量：`VITE_GLOB_API_URL=/api`、`VITE_APP_API_BASE_URL=http://127.0.0.1:3002/`、`VITE_GLOB_OPEN_LONG_REPLY=false`、`VITE_GLOB_APP_PWA=false`。
+
+`.env.production` **是刻意入库的**：`vite build`（含 CI / Docker）会自动加载它，没有它构建产物里的 API 前缀就是 `undefined`。
 
 ### pnpm 11 拦截构建脚本
 
@@ -112,9 +114,12 @@ vite 遇到端口占用**会静默顺延**到 1003/1004，所以「页面打开�
 
 ### 其他
 
-- `service/.npmrc` 的 `store-dir` 是沙箱规避（默认 store 路径被限制），别删
+- `service/.npmrc` 的 `store-dir` 是沙箱规避（默认 store 路径被限制），别删 —— 但在 **Linux（CI / Docker）上必须用 `--store-dir` 覆盖**，否则 pnpm 会照着 `D:/test/...` 去建 store
 - PowerShell 下 `curl -d` 的引号会被吞，改用 `--data @file`
 - embedding 必须用独立服务商（DeepSeek 无 embedding 接口），配 `EMBEDDING_API_KEY` / `EMBEDDING_API_BASE_URL` / `EMBEDDING_MODEL`
+- **eslint（@antfu 配置）连 YAML 一起 lint**：新增 `.yml` 会被 `yml/quotes`（要单引号，端口这类无歧义的纯量直接写 `- 8080:80`）和 `yml/no-empty-mapping-value`（空值要写 `{}`，如 `pull_request: {}`）拦下
+- **打包产物不能只验证「构建成功」**：esbuild 会把 `node:` 前缀统一剥掉，`node:crypto → crypto` 无妨，但 `node:sqlite → sqlite` 会变成 npm 包名 → **构建全绿、`node build/index.mjs` 启动即 `ERR_MODULE_NOT_FOUND`**（Dockerfile 的 CMD 就是它）。已在 `tsup.config.ts` 用 `external: ['node:sqlite']` 固定，CI 里也有打包产物启动冒烟兜底
+- **本机没装 Docker**：Dockerfile / compose 的改动无法在本地验证，只能靠 CI 的 `docker` job（push 后盯一眼）
 
 ### 护栏（来自 workflow.md）
 
