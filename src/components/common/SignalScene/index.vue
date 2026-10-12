@@ -13,7 +13,7 @@ interface Props {
 const props = defineProps<Props>()
 
 /**
- * 三个变体共用同一条「脉搏」信号的开头（与 BrandLogo 的波形同源），
+ * 三个变体共用同一条「脉搏」信号的开头（与登录页仪表、背景素材里的 ECG 同源），
  * 区别只在它怎么失败 —— 这样三张错误页看起来是同一个信号系统的三种故障。
  */
 const TRACE: Record<Props['variant'], string> = {

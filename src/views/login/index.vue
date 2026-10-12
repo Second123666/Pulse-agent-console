@@ -16,7 +16,7 @@ const MODES: Array<{ value: Mode; label: string }> = [
 
 /**
  * 脉搏轨迹：登录页的**状态仪表**，不是装饰。
- * 与 BrandLogo 的波形、错误页 SignalScene 的轨迹同源 —— 同一条信号在这里量的是
+ * 与错误页 SignalScene 的轨迹、背景素材里那条 ECG 同源 —— 同一种信号在这里量的是
  * 「工作台是否够得着」：通的时候画到底、末端亮点呼吸；不通就断在半途并标出故障点。
  */
 const TRACE_OK = 'M0 48 H56 L70 20 L88 76 L100 34 L110 48 H196 L208 30 L222 62 L232 48 H340 L352 40 L362 48 H414'
@@ -130,24 +130,12 @@ onMounted(async () => {
 <template>
   <div class="auth-page">
     <!--
-      背景：同一台仪器的**其它通道在空转** —— 极淡的方格场 + 两条缓慢漂移的轨迹 + 一点辉光。
-      刻意不用照片：这个页面的语言是发丝线与方格，摄影图会把它们全压住，
-      而且亮/暗两套还得各配一层遮罩。这里全是 CSS + 内联 SVG，零素材、跟着令牌自动换色
+      背景：一张真素材 —— 左侧 ECG 心电轨迹、右下信号网络、右上光晕。
+      选它不是「随便找张好看的图」：轨迹与页面上那条脉搏线是同一种语言，
+      网络就是 Agent 的工具调用图 —— 它读起来是这台仪器的信号源，而不是装饰照片。
+      亮/暗各配一层罩（浅色压对比让白面板浮起来，暗色把亮图压成底纹），见样式里的 .backdrop
     -->
-    <div class="backdrop" aria-hidden="true">
-      <svg class="backdrop__trace backdrop__trace--a" viewBox="0 0 1200 160" preserveAspectRatio="none" fill="none">
-        <path
-          d="M0 80 H180 L200 40 L230 130 L250 60 L270 80 H420 L445 30 L470 120 L490 70 H640 L665 45 L690 110 L710 80 H900 L925 55 L950 100 H1200"
-          vector-effect="non-scaling-stroke"
-        />
-      </svg>
-      <svg class="backdrop__trace backdrop__trace--b" viewBox="0 0 1200 160" preserveAspectRatio="none" fill="none">
-        <path
-          d="M0 80 H300 L330 50 L360 115 L390 80 H700 L730 40 L760 125 L790 80 H1100 L1130 60 L1160 95 H1200"
-          vector-effect="non-scaling-stroke"
-        />
-      </svg>
-    </div>
+    <div class="backdrop" aria-hidden="true" />
 
     <div class="auth-column">
       <!-- 仪表：一条与产品同源的脉搏线。连通时画到底、末端呼吸；不通就断在半途 -->
@@ -281,62 +269,34 @@ onMounted(async () => {
   background: var(--agent-bg);
 }
 
-// ---- 背景：其它通道在空转 ----
+// ---- 背景：真素材（左 ECG 脉搏 / 右下信号网络 / 右上光晕）----
+// 素材是 2048×1152 的 2.4MB PNG，入库的是压过的 1920×1080 webp（51KB，48 倍）
 .backdrop {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  background-image: url('../../assets/login-backdrop.webp');
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 
-  // 方格场：把仪表屏的网格延伸到整页，向外圈淡出（免得整页像坐标纸）
+  // 浅色：一层纸色罩。图本身很亮（平均 #A6CDC9），不压一层的话
+  // 白色面板在它上面浮不起来，正文对比度也不够
   &::before {
     content: '';
     position: absolute;
-    inset: -12%;
-    z-index: 0;
-    background-image:
-      repeating-linear-gradient(to right, var(--agent-hairline) 0 1px, transparent 1px 34px),
-      repeating-linear-gradient(to bottom, var(--agent-hairline) 0 1px, transparent 1px 34px);
-    mask-image: radial-gradient(ellipse 68% 58% at 50% 46%, #000 18%, transparent 76%);
-    opacity: 0.55;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(247, 247, 244, 0.5), rgba(247, 247, 244, 0.68));
   }
+}
 
-  // 辉光：面板背后一点点信号青，让它在纸面/墨底上「亮」起来
-  &::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 46%;
-    z-index: 2;
-    width: 620px;
-    height: 620px;
-    transform: translate(-50%, -50%);
-    background: radial-gradient(circle, var(--agent-accent-soft), transparent 60%);
-    opacity: 0.7;
-  }
-
-  // 远端的通道：扁、淡、慢。高度压到 90px 是为了把 viewBox 里的尖峰在纵向压扁 ——
-  // 不压的话它们是两排山，会跟主角那条脉搏线抢注意力
-  &__trace {
-    position: absolute;
-    z-index: 1;
-    width: 150%;
-    height: 90px;
-    stroke: var(--agent-accent);
-    stroke-width: 1.5;
-    opacity: 0.08;
-
-    &--a {
-      top: 9%;
-      left: -25%;
-      animation: drift-a 96s ease-in-out infinite alternate;
-    }
-
-    &--b {
-      right: -25%;
-      bottom: 7%;
-      animation: drift-b 132s ease-in-out infinite alternate;
-    }
-  }
+// 暗色：把这张亮图压成底纹。用墨色罩而不是 filter —— filter 会连
+// 面板的投影一起改，罩子只作用于背景，可预测。
+// **必须写成顶层 `html.dark .x`**：写成嵌套的 `:global(html.dark) &::before`，
+// LESS 会把 `&::before` 整个吞掉，编译出 `html.dark { background: ... }` ——
+// 规则落在根元素上，背景纹丝不动（实测踩过）
+html.dark .backdrop::before {
+  background: linear-gradient(180deg, rgba(14, 16, 19, 0.86), rgba(14, 16, 19, 0.92));
 }
 
 .auth-column {
@@ -346,6 +306,17 @@ onMounted(async () => {
   max-width: 420px;
   // 整台机器一起进场（屏与机身同动，否则进场时两者会裂开）
   animation: panel-in 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  // 面板现在坐在一张图上（不再是纯色底），需要一点高度把它和背景分开。
+  // 用 drop-shadow 而不是 box-shadow：仪表屏 + 面板是两块拼成一个轮廓，
+  // 各自加阴影会在接缝处露出一条线
+  filter: drop-shadow(0 18px 40px rgb(16 24 32 / 14%));
+}
+
+// 同样必须顶层写（理由见上面 .backdrop 那条）：嵌套 `:global(html.dark) &`
+// 编译出来是 `html.dark { filter: ... }` —— filter 落在根元素上会给所有
+// fixed 后代造 containing block，暗色下整个布局都可能错位
+html.dark .auth-column {
+  filter: drop-shadow(0 20px 46px rgb(0 0 0 / 55%));
 }
 
 // ---- 仪表（与下面的面板是同一台机器：屏坐在机身上）----
@@ -552,19 +523,6 @@ html.dark .scope {
   }
 }
 
-// 背景轨迹的漂移：一往一返（alternate），不是匀速循环 —— 匀速会有一个肉眼可见的接缝
-@keyframes drift-a {
-  to {
-    transform: translate3d(-5%, 0, 0);
-  }
-}
-
-@keyframes drift-b {
-  to {
-    transform: translate3d(4%, 0, 0);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .scope__line {
     animation: none;
@@ -582,10 +540,6 @@ html.dark .scope {
   }
 
   .auth-column {
-    animation: none;
-  }
-
-  .backdrop__trace {
     animation: none;
   }
 
