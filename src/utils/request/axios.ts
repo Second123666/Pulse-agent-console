@@ -19,10 +19,14 @@ service.interceptors.request.use(
 
 service.interceptors.response.use(
   (response: AxiosResponse): AxiosResponse => {
-    if (response.status === 200)
+    // 2xx 一律算成功（axios 的 validateStatus 默认也认 2xx）。早先这里写死
+    // `status === 200`，于是按 HTTP 语义返回 **201 Created** 的注册接口被当成
+    // 失败抛出去 —— 用户只看到一个光秃秃的 "201" 提示，token 也拿不到，
+    // 注册完不会自动登录（见 store/modules/auth 的 register）。
+    if (response.status >= 200 && response.status < 300)
       return response
 
-    throw new Error(response.status.toString())
+    throw new Error(`HTTP ${response.status}`)
   },
   (error) => {
     // 401 统一处理：登录态失效 → 清 token + 跳登录页（区别于 403 无权限）

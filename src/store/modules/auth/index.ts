@@ -3,7 +3,23 @@ import { getToken, removeToken, setToken } from './helper'
 import type { AuthSessionPayload, AuthUser } from '@/api'
 import { store } from '@/store/helper'
 import { useChatStore } from '@/store/modules/chat'
+import { useUserStore } from '@/store/modules/user'
 import { fetchLogin, fetchMe, fetchRegister, fetchSession } from '@/api'
+
+/**
+ * 身份变化时同步「显示偏好」的归属账号。
+ *
+ * 显示偏好（头像 / 昵称 / 简介，见 store/modules/user）在本地是**按账号分份存的**，
+ * 所以身份一变就得切份 —— 否则 A 账号设过的昵称会跟着 B 账号显示出来。
+ * 三处写入点（登录 / 注册 / 刷新后 /auth/me）都必须经过这里。
+ */
+function syncUserPrefs(user: AuthUser | null) {
+  const userStore = useUserStore()
+  if (user)
+    userStore.loadForUser(user.id)
+  else
+    userStore.clearForLogout()
+}
 
 interface SessionResponse {
   auth: boolean
@@ -68,6 +84,7 @@ export const useAuthStore = defineStore('auth-store', {
       const { data } = await fetchLogin<AuthSessionPayload>(username, password)
       this.setToken(data.token)
       this.user = data.user
+      syncUserPrefs(data.user)
       return data.user
     },
 
@@ -76,6 +93,7 @@ export const useAuthStore = defineStore('auth-store', {
       const { data } = await fetchRegister<AuthSessionPayload>(username, password, inviteCode)
       this.setToken(data.token)
       this.user = data.user
+      syncUserPrefs(data.user)
       return data.user
     },
 
@@ -83,6 +101,7 @@ export const useAuthStore = defineStore('auth-store', {
     async getUserInfo() {
       const { data } = await fetchMe<{ user: AuthUser }>()
       this.user = data.user
+      syncUserPrefs(data.user)
       return data.user
     },
 
@@ -93,6 +112,7 @@ export const useAuthStore = defineStore('auth-store', {
       useChatStore().resetForLogout()
       this.removeToken()
       this.user = null
+      syncUserPrefs(null)
     },
 
     /**

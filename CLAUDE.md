@@ -84,6 +84,8 @@ embedding 不可用时（缺 key / 接口失败）自动降级为关键词匹配
 
 显示名 = `userInfo.name`（用户自定义过才有）→ 回落到 `authStore.user.username`（见 `UserAvatar`）。早期 `userInfo.name` 默认写死成上游作者的 `'Second'`、又没有任何代码去覆盖它，导致**每个账号都显示同一个名字** —— 加显示字段时别再往本地那份里塞死值。
 
+**本地那份是按账号分份存的**（`userStorage` 的 `data` 是个 `{ [userId]: UserInfo }` 映射）。所以身份一变就必须切份：`authStore` 在**四个**身份写入点（`login` / `register` / `getUserInfo` / `logout`）都调 `syncUserPrefs()` → `userStore.loadForUser(id)` 或 `clearForLogout()`。**新增任何写 `authStore.user` 的地方，都要跟着调一次**，否则 A 账号的昵称会跟着 B 账号显示（用户实测过：建了 xiaoming / test1，左下角还是上一个人留下的 "test"）。旧格式（单份全局）的 `userStorage` 会在读取时被丢弃并清掉。
+
 ## 坑与约束
 
 ### 根 `.env` 必须存在（新克隆必丢）
@@ -127,6 +129,7 @@ vite 遇到端口占用**会静默顺延**到 1003/1004，所以「页面打开�
 - **eslint（@antfu 配置）连 YAML 一起 lint**：新增 `.yml` 会被 `yml/quotes`（要单引号，端口这类无歧义的纯量直接写 `- 8080:80`）和 `yml/no-empty-mapping-value`（空值要写 `{}`，如 `pull_request: {}`）拦下
 - **打包产物不能只验证「构建成功」**：esbuild 会把 `node:` 前缀统一剥掉，`node:crypto → crypto` 无妨，但 `node:sqlite → sqlite` 会变成 npm 包名 → **构建全绿、`node build/index.mjs` 启动即 `ERR_MODULE_NOT_FOUND`**（Dockerfile 的 CMD 就是它）。已在 `tsup.config.ts` 用 `external: ['node:sqlite']` 固定，CI 里也有打包产物启动冒烟兜底
 - **本机没装 Docker**：Dockerfile / compose 的改动无法在本地验证，只能靠 CI 的 `docker` job（push 后盯一眼）
+- **响应拦截器只认 200 会把 2xx 里其它状态码当失败**：`utils/request/axios.ts` 早先写死 `status === 200`，而注册接口按 HTTP 语义返回 **201 Created** —— 结果是「注册其实成功了，前端却弹一个光秃秃的 `201`、token 拿不到、不会自动登录」。已改成 2xx 区间。**加新接口时若用了 201/204 等状态码，记得这条曾经踩过**
 - **样式会被静默丢弃，lint 与 `vue-tsc` 全绿也照样丢** —— 两个已踩过的坑，改完样式务必去浏览器里看一眼**计算值**，别只看截图（肉眼会被其它因素盖住）：
   1. **暗色别写 `:global(html.dark) &`**：LESS 嵌套里 `&` 会被吞掉，编译成 `html.dark { ... }` —— 规则落在**根元素**上，背景纹丝不动；更糟的是 `filter` 落到根元素会给所有 fixed 后代造 containing block，暗色下布局可能整体错位。一律写顶层 `html.dark .x`（`html.dark .signal-scene` / `html.dark .scope` 就是这个写法）
   2. **`<style scoped>` 没写 `lang="less"` 时不能嵌套**：`&--x` 在纯 CSS 里是非法语法，**整段规则被丢掉**（BrandLogo 踩过：`border-radius` 失效，而母版 PNG 自带透明圆角恰好把它盖住了，截图上看不出任何异常）
