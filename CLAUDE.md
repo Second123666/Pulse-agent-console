@@ -77,6 +77,13 @@ embedding 不可用时（缺 key / 接口失败）自动降级为关键词匹配
 
 **注意**：Header 里的 Agent 开关仅在 `isMobile` 时渲染，桌面端的开关是底部工具栏的机器人图标。
 
+### 身份分在两个 store（别搞混）
+
+- `authStore.user`（`store/modules/auth`）—— **账号身份**：`{id, username, role}`，登录/注册时写入，刷新后由路由守卫第 4 步 `/auth/me` 重新拉取。多租户相关的判断（如 chat store 的水合）都认它。
+- `userStore.userInfo`（`store/modules/user`）—— **显示偏好**：`{avatar, name, description}`，只存在 localStorage，只有设置面板会写。它**不是身份**。
+
+显示名 = `userInfo.name`（用户自定义过才有）→ 回落到 `authStore.user.username`（见 `UserAvatar`）。早期 `userInfo.name` 默认写死成上游作者的 `'Second'`、又没有任何代码去覆盖它，导致**每个账号都显示同一个名字** —— 加显示字段时别再往本地那份里塞死值。
+
 ## 坑与约束
 
 ### 根 `.env` 必须存在（新克隆必丢）

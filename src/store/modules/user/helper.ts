@@ -19,7 +19,10 @@ export function defaultSetting(): UserState {
       // 用 import 而不是写死 '/src/assets/...'：后者只在 dev server 下能解析，
       // 生产构建里那个路径根本不存在，头像会 404
       avatar: secondAvatar,
-      name: 'Second',
+      // 空 = 「用户没自定义过昵称」，显示层回落到当前账号的用户名（见 UserAvatar）。
+      // 这里**不能**写死一个名字：本应用是多账号的，写死会让每个新用户都顶着
+      // 同一个名字（上游遗留的就是 'Second'，登录后也没有任何代码去覆盖它）
+      name: '',
       description: '',
     },
   }
