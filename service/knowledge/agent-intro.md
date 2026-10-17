@@ -11,7 +11,7 @@ Agent 通过「思考 → 调用工具 → 观察结果 → 继续思考」的�
 
 - calculator：安全四则运算
 - get_time：当前时间与时区换算
-- web_search：联网搜索（需配置 SEARCH_API_KEY）
+- web_search：联网搜索（走 DeepSeek Search API，复用 API_KEY）
 - read_file：只读仓库内文件
 
 ## 熔断机制

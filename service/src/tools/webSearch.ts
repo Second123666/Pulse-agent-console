@@ -1,27 +1,23 @@
 import type { Tool } from '../agent/types'
 
-/** 博查 Web Search API（国内直连，控制台 https://open.bochaai.com） */
-const BOCHA_SEARCH_URL = 'https://api.bochaai.com/v1/web-search'
+/** DeepSeek Search API（与 DeepSeek API 同域同 key，文档 https://api-docs.deepseek.com/guides/search） */
+const DEEPSEEK_SEARCH_URL = 'https://api.deepseek.com/v1/tools/search'
 
-interface BochaPage {
-  name?: string
+interface DeepSeekSearchResult {
+  title?: string
   url?: string
   snippet?: string
   summary?: string
-  siteName?: string
-  datePublished?: string
-}
-
-function searchKey(): string {
-  return process.env.SEARCH_API_KEY?.trim() ?? ''
+  site_name?: string
+  date?: string
 }
 
 /**
- * 取出结果数组。博查官方文档的响应为 `{ data: { webPages: { value } } }`，
- * 部分资料/网关版本直接给 `{ webPages: { value } }`，两种都兼容，避免因包裹层差异静默返回空结果。
+ * 搜索 key：优先 SEARCH_API_KEY（聊天与搜索分属不同服务商时单独配），
+ * 缺省复用聊天服务商的 API_KEY —— 项目对话走 DeepSeek 时同一个 key 即可，零配置。
  */
-function extractPages(payload: any): BochaPage[] {
-  return payload?.data?.webPages?.value ?? payload?.webPages?.value ?? []
+function searchKey(): string {
+  return process.env.SEARCH_API_KEY?.trim() || process.env.API_KEY?.trim() || ''
 }
 
 export const webSearch: Tool = {
@@ -37,7 +33,7 @@ export const webSearch: Tool = {
   },
   // 每次调用都消耗搜索配额（按量计费），执行前需用户确认
   requiresApproval: true,
-  approvalReason: '联网搜索会消耗博查搜索配额（按量计费）',
+  approvalReason: '联网搜索会消耗 DeepSeek 搜索配额（按量计费）',
   handler: async (args) => {
     const query = String(args.query ?? '').trim()
     if (!query)
@@ -45,20 +41,21 @@ export const webSearch: Tool = {
 
     const key = searchKey()
     if (!key)
-      return '搜索 API 未配置（缺少 SEARCH_API_KEY 环境变量），无法执行联网搜索。'
+      return '搜索 API 未配置（缺少 SEARCH_API_KEY 或 API_KEY 环境变量），无法执行联网搜索。'
 
     const maxResults = Math.min(10, Math.max(1, Number(args.maxResults) || 5))
-    const response = await fetch(BOCHA_SEARCH_URL, {
+    const response = await fetch(DEEPSEEK_SEARCH_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${key}`,
       },
-      body: JSON.stringify({ query, count: maxResults, summary: true }),
+      // count 官方范围 1..50；summary（600-800 字长摘要）默认返回，无需额外开关
+      body: JSON.stringify({ query, count: maxResults }),
     })
 
     if (!response.ok) {
-      // 博查返回真实 HTTP 状态码，body 里带 message（如 Invalid API KEY / 余额不足），带出来便于排查
+      // DeepSeek 错误信封为 { error: { message } }（如 api key 无效 / 余额不足），带出来便于排查
       let detail = ''
       try {
         detail = await response.text()
@@ -68,7 +65,8 @@ export const webSearch: Tool = {
       }
       let message = detail.slice(0, 200)
       try {
-        message = JSON.parse(detail)?.message ?? message
+        const parsed = JSON.parse(detail)
+        message = parsed?.error?.message ?? parsed?.message ?? message
       }
       catch {
         // 非 JSON 就原样用截断后的文本
@@ -77,15 +75,15 @@ export const webSearch: Tool = {
     }
 
     const payload = await response.json()
-    const pages = extractPages(payload)
-    if (pages.length === 0)
+    const results: DeepSeekSearchResult[] = (payload as any)?.results ?? []
+    if (results.length === 0)
       return '未找到相关搜索结果。'
-    return pages
+    return results
       .map((item, i) => {
-        // summary 是开启 summary:true 后的长摘要，缺省回退到 snippet
+        // summary 是模型可读的长摘要，缺省回退 snippet
         const content = item.summary || item.snippet || ''
-        const meta = [item.siteName, item.datePublished?.slice(0, 10)].filter(Boolean).join(' · ')
-        return `${i + 1}. ${item.name ?? '(无标题)'}\n   ${item.url ?? ''}${meta ? `\n   ${meta}` : ''}\n   ${content}`
+        const meta = [item.site_name, item.date?.slice(0, 10)].filter(Boolean).join(' · ')
+        return `${i + 1}. ${item.title ?? '(无标题)'}\n   ${item.url ?? ''}${meta ? `\n   ${meta}` : ''}\n   ${content}`
       })
       .join('\n')
   },
