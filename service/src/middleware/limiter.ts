@@ -3,9 +3,12 @@ import { isNotEmptyString } from '../utils/is'
 
 const MAX_REQUEST_PER_HOUR = process.env.MAX_REQUEST_PER_HOUR
 
-const maxCount = (isNotEmptyString(MAX_REQUEST_PER_HOUR) && !isNaN(Number(MAX_REQUEST_PER_HOUR)))
+const rawMax = (isNotEmptyString(MAX_REQUEST_PER_HOUR) && !isNaN(Number(MAX_REQUEST_PER_HOUR)))
   ? parseInt(MAX_REQUEST_PER_HOUR)
-  : 0 // 0 means unlimited
+  : 0
+// 0 语义为「不限制」，但 express-rate-limit 6.x 拒绝 0（ERR_ERL_MAX_ZERO 校验警告
+// 会在启动时打印一屏堆栈），因此换算成一个足够大的上限表达同等含义。
+const maxCount = rawMax > 0 ? rawMax : 1000000
 
 const limiter = rateLimit({
   windowMs: 60 * 60 * 1000, // Maximum number of accesses within an hour
