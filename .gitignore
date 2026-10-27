@@ -34,3 +34,11 @@ coverage
 
 # Agent runtime data
 service/data/
+
+# 内部开发日志 / 工作流文档（不随仓库公开）
+PROGRESS.md
+workflow*.md
+.claude/ralph-loop.local.md
+
+# 本地测试知识库文档
+service/knowledge/rag-test.md

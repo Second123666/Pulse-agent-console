@@ -1,6 +1,6 @@
 # 思脉AI工作台 · pulse · agent console
 
-> 一个可调用工具的 Agent 化 AI 对话工作台 —— 基于 ChatGPT-Web 二次开发，为原版对话系统注入了 **ReAct 工具调用循环、RAG 知识库与 SSE 流式 Agent 交互**。
+> 一个可调用工具的 Agent 化 AI 对话工作台 —— 用 **ReAct 工具调用循环、RAG 知识库与 SSE 流式交互**，把普通聊天升级成能拆解任务、逐步执行的 Agent 控制台。
 
 [![Node](https://img.shields.io/badge/node-%3E%3D24-blue)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-4.9-blue)](https://www.typescriptlang.org)
@@ -20,6 +20,7 @@
 - [快速开始](#快速开始)
 - [部署（Docker）](#部署docker)
 - [配置说明](#配置说明)
+- [来源与许可](#来源与许可)
 
 ## 项目简介
 
@@ -227,3 +228,12 @@ docker/nginx.conf # 反代 /api（剥前缀）+ SSE 关缓冲 + SPA 回退
 docker-compose.yml
 .github/workflows/ci.yml
 ```
+
+## 来源与许可
+
+本项目基于 [Chanzhaoyu/chatgpt-web](https://github.com/Chanzhaoyu/chatgpt-web)（v2.11.1）二次开发，原项目采用 MIT 协议，版权声明为 `Copyright (c) 2023 ChenZhaoYu`。
+
+- **沿用上游**：Vue 3 + Naive UI 前端骨架、聊天页与会话管理、`/chat-process` 流式接口、多语言 / 暗色模式 / PWA 等基础能力。
+- **本项目新增**：Agent 内核（ReAct 循环、工具注册表、SSE 事件流、熔断）、工具系统、RAG 知识库、自建鉴权、ToolCallCard 步骤可视化，以及配套单测与 CI 流水线。
+
+本项目同样以 **MIT** 协议开源，完整许可文本见 [LICENSE](LICENSE)。

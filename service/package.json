@@ -1,12 +1,23 @@
 {
-  "name": "chatgpt-web-service",
+  "name": "pulse-agent-console-service",
   "version": "1.0.0",
   "private": false,
-  "description": "ChatGPT Web Service",
-  "author": "ChenZhaoYu <chenzhaoyu1994@gmail.com>",
+  "description": "思脉AI工作台后端：Express + ReAct Agent 循环（基于 ChatGPT-Web 二次开发）",
+  "author": "Second",
+  "contributors": [
+    "ChenZhaoYu <chenzhaoyu1994@gmail.com>"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Second123666/AI-chat.git",
+    "directory": "service"
+  },
   "keywords": [
     "chatgpt-web",
-    "chatgpt",
+    "agent",
+    "react",
+    "rag",
     "chatbot",
     "express"
   ],
