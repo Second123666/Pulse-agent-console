@@ -2,7 +2,7 @@
 
 日期：2026-09-29
 状态：待批准
-项目：`chatgpt-web-main`（chatgpt-web v2.11.1，Vue3 + naive-ui 前端，Express 后端）
+项目：`pulse-agent-console-main`（chatgpt-web v2.11.1，Vue3 + naive-ui 前端，Express 后端）
 前序：`2026-09-19-agent-upgrade-design.md`（Phase 0–5，已完成）
 
 ## 背景
