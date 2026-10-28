@@ -2,7 +2,7 @@
 
 日期：2026-09-19
 状态：已批准（方案 A）
-项目：`d:\test\ai-chat-gitee-main`（chatgpt-web v2.11.1，Vue3 + naive-ui 前端，Express 后端）
+项目：`chatgpt-web-main`（chatgpt-web v2.11.1，Vue3 + naive-ui 前端，Express 后端）
 
 ## 目标
 

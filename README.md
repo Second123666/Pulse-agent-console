@@ -142,7 +142,7 @@ register(myTool)
 - **安全工具执行**：calculator 自写递归下降解析器（杜绝 eval 注入）；read_file 路径白名单 + `..` 逃逸防护 + 100KB 限流
 - **多级容错**：工具异常错误文本回填自愈、步数/预算双熔断、embedding 失败关键词降级、前端 SSE 断流容错
 - **全链路可视化**：思考 / 工具调用 / 工具结果以控制台步骤流卡片（▎思考 / ├─▸ 工具）实时流式展示
-- **工程化完备**：vitest 单测 **256 例 / 26 文件**（覆盖 Agent 循环熔断、工具、RAG、鉴权、多模态降级、会话租户隔离）、type-check + eslint 全绿、GitHub Actions CI（含打包产物启动冒烟 + 镜像构建）、conventional commits
+- **工程化完备**：vitest 单测 **257 例 / 26 文件**（覆盖 Agent 循环熔断、工具、RAG、鉴权、多模态降级、会话租户隔离）、type-check + eslint 全绿、GitHub Actions CI（含打包产物启动冒烟 + 镜像构建）、conventional commits
 - **零外部依赖核心链**：除 LLM 与搜索 API 外，Agent 循环、RAG、前端渲染全部自主实现
 
 ## 快速开始
