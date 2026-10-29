@@ -26,6 +26,8 @@
 
 「思脉AI工作台」是一个 **Agent 化**的 AI 对话应用：在普通聊天的基础上，模型可以按需调用工具（计算器、时间、联网搜索、文件读取、知识库检索），像"思考 → 行动 → 观察 → 总结"的人类工作流一样拆解并完成任务。
 
+
+
 - **前端**：Vue 3 + Naive UI + Tailwind，支持多语言、暗色模式、PWA、命令面板（⌘K）
 - **后端**：Express + TypeScript，OpenAI 兼容协议，零外部服务依赖即可跑通全流程
 - **Agent 内核**：自研 ReAct 循环 + 工具注册表 + 熔断/预算兜底，约 400 行核心代码
@@ -231,9 +233,10 @@ docker-compose.yml
 
 ## 来源与许可
 
-本项目基于 [Chanzhaoyu/chatgpt-web](https://github.com/Chanzhaoyu/chatgpt-web)（v2.11.1）二次开发，原项目采用 MIT 协议，版权声明为 `Copyright (c) 2023 ChenZhaoYu`。
+本项目基于 [Chanzhaoyu/chatgpt-web](https://github.com/Chanzhaoyu/chatgpt-web)（v2.11.1）架构级重构，原项目采用 MIT 协议，版权声明为 `Copyright (c) 2023 ChenZhaoYu`。
 
 - **沿用上游**：Vue 3 + Naive UI 前端骨架、聊天页与会话管理、`/chat-process` 流式接口、多语言 / 暗色模式 / PWA 等基础能力。
 - **本项目新增**：Agent 内核（ReAct 循环、工具注册表、SSE 事件流、熔断）、工具系统、RAG 知识库、自建鉴权、ToolCallCard 步骤可视化，以及配套单测与 CI 流水线。
 
 本项目同样以 **MIT** 协议开源，完整许可文本见 [LICENSE](LICENSE)。
+
